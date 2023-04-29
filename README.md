@@ -3,11 +3,18 @@ Copyright: (c) 2023, Alrik Neumann
 GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
 -->
 
-# Deterministic Finite Automations in Haskell
+# Finite Automations and Regular Languages in Haskell
 
-As I am currently learning about the theory of computation I am implementng this small haskell module, that simulates DFA's. As I progress through the curriculum I plan to extend this module to represent a larger part of the theory.
+I am implementing these small modules to help me study theory of computation.
+There are two modules:
 
-## Basic functionality
+`DFA.hs` implements deterministic finite automations (DFAs) only. I have written this first and the code is likely less clean.
+
+`FA.hs` implements the more general case of nondeterministic finite automations (NFAs) and treats DFAs merely as a special case of NFAs, as they mathematically are.
+
+## `DFA.ha`
+
+### Basic functionality
 
 The module revolves around the DFA data constructor which is of kind `(* -> *)`
 It should always be fed an Ord-type as argument as this is what pretty much all the functions in this module expect. When making new DFAs the recommended way, checking for this will be done automatically.
@@ -18,19 +25,11 @@ Symbols (`Symbol`) are implemented as `Char` and words (`WordDFA`) as `String`.
 
 The function `accpets :: Ord a => DFA a -> wordDFA -> Maybe Bool`, checks weather a DFA accepts a word.
 
-## Additional functionality
+### Additional functionality
 
 The functions complementDFA, intersectionDFA and unionDFA can be used to create new dfas which accept complements, intersections or unions of the languages which are accepted by input DFAs.
 
-## Planned functionality
+## `FA.hs`
 
-### More DFA and regular languages
-- a function, that creates a regular language (as a set) from a DFA
-
-### Regular Expressions
-- functions that create regular languages (as sets) from regular expressions
-- functions that translate regular expressions into DFAs and vice versa
-
-### functionality for NFAs
-- datatype for NFAs
-- translate NFAs into DFAs
+I have reassigned typesynonyms which should amount to generally cleaner code.
+So far I have implemented the `makeFA` function, which creates an FA from lists instead of sets.
