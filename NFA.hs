@@ -3,8 +3,8 @@
 
 module NFA (NFA, makeNFA, acceptsNFA) where
 
-import qualified Data.Set as S (Set, fromList, isSubsetOf, cartesianProduct, empty, map, filter, null, member, union, difference, unions, disjoint)
-import qualified Data.Maybe as M () 
+import qualified Data.Set as S (Set, singleton, findIndex, size, toList, fromList, isSubsetOf, insert, cartesianProduct, empty, map, filter, null, member, union, difference, unions, disjoint, toAscList)
+import qualified Data.Maybe as M (fromJust) 
 import qualified Data.Bifunctor as BF (second)
 
 -- As for NFAs we want to allow for ε-labeled arrows we need a value of type Symbol to represent
@@ -31,6 +31,10 @@ data NFA a = NFA {states :: States a,
                   start :: States a,
                   finish :: States a}
                   deriving (Show, Eq)
+
+------------------------------------------------
+-- functions for creating and validating NFAs --
+------------------------------------------------
 
 -- Convinient way to create an NFA as it takes lists as arguments instead of sets.
 -- The Symbol representing an empty word should be passed as sempty.
@@ -65,6 +69,56 @@ validNFA inputFA = True
 --   where
 --     deltaLeft  = S.map ((\(arg,[val]) -> (arg,val)) . fst) (delta inputFA)
 --     deltaRight = S.map snd (delta inputFA)
+
+----------------------------------------------------
+-- operations for creating new NFAs from old ones --
+----------------------------------------------------
+
+-- Takes and NFA and converts it into an equivalent NFA, which has Int type states starting
+-- with smallest
+states2intNFA :: (Ord a) => Int -> NFA a -> NFA Int
+states2intNFA smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFinish
+  where
+    newStates = S.fromList $ zipWith const [smallest..] $ S.toAscList $ states nfa
+    newDelta  = S.map transitionRule2int $ delta nfa
+    newStart  = S.map state2int $ start nfa
+    newFinish = S.map state2int $ finish nfa
+    state2int state = (+smallest) $ S.findIndex state $ states nfa
+    transitionRule2int ((stateArg,symbol),stateSetVal) = ((state2int stateArg,symbol),S.map state2int stateSetVal)
+
+-- Takes two NFAs and returns an NFA that recognizes the language which is the union of
+-- the languages recognized by the input NFA's
+unionNFA :: (Ord a, Ord b) => NFA a -> NFA b -> NFA Int
+unionNFA nfa nfb = NFA newStates newSigma newDelta newStart newFinish
+  where
+    newStates = S.insert 0 $ S.union (states nfaInt) (states nfbInt)
+    newSigma  = S.union (sigma  nfaInt) (sigma  nfbInt)
+    newDelta  = S.unions [newEdges, delta  nfaInt, delta  nfbInt]
+    newStart  = S.singleton 0
+    newFinish = S.union (finish nfaInt) (finish nfbInt)
+    newEdges  = S.union (S.map makeEpsilonEdgeFrom0 $ start nfaInt)
+                        (S.map makeEpsilonEdgeFrom0 $ start nfbInt)
+    nfaInt = states2intNFA 1 nfa
+    nfbInt = states2intNFA ((+1) $ S.size $ states nfa) nfb
+    makeEpsilonEdgeFrom0 state = ((0,sempty),S.singleton state)
+
+-- Takes an NFA and returns the NFA that recognizes the complement of the language recognized
+-- by the input NFA.
+-- The complement is the complement relative to all the words over sigma, the NFA's alphabet.
+-- THIS IS THE BUGGY PART
+-- PROBLEM: Epsilon-Edges do mess up the idea
+complementNFA :: (Ord a) => NFA a -> NFA a
+complementNFA nfa = nfa { finish = S.difference (states nfa) (finish nfa) }
+
+-- Takes two NFAs and returns an NFA that recognizes the intersection of the two languages 
+-- recognized by the input NFAs.
+-- DOES NOT WORK CORRECTLY YET
+intersectionNFA :: (Ord a, Ord b) => NFA a -> NFA b -> NFA Int
+intersectionNFA nfa nfb = complementNFA $ unionNFA (complementNFA nfa) (complementNFA nfb)
+
+-----------------------------------------------------
+-- functions for checking if an NFA accepts a word --
+-----------------------------------------------------
 
 -- returns Nothing when any Symbol of the input word is not in the NFA's alphabet (sigma).
 -- returns Just True when the NFA accepts the input word
@@ -112,4 +166,20 @@ processNormalEdgesNFA delta symbol states = S.unions $ S.map snd $ S.filter ((`S
 
 -- zeros2div3div
 -- an NFA that has an alphabet that consists only of '0' and accepts any number of '0's that is divisible by 2 or 3
-zeros2div3div = makeNFA [0,1,2,3,4,5] ['0'] [((0,sempty),[1,3]),((1,'0'),[2]),((2,'0'),[1]),((3,'0'),[4]),((4,'0'),[5]),((5,'0'),[4])] [0] [1,3] :: Maybe (NFA Int)
+zeros2div3div = M.fromJust $ makeNFA [0,1,2,3,4,5] ['0'] [((0,sempty),[1,3]),((1,'0'),[2]),((2,'0'),[1]),((3,'0'),[4]),((4,'0'),[5]),((5,'0'),[3])] [0] [1,3]
+
+zeros2div3divInt = states2intNFA 0 zeros2div3div
+
+notZeros2div3div = complementNFA zeros2div3div
+
+even1s = M.fromJust $ makeNFA [0,1] ['0','1'] [((0,'0'),[0]),((1,'0'),[1]),((0,'1'),[1]),((1,'1'),[0])] [0] [0]
+
+endsWith1 = M.fromJust $ makeNFA [0,1] ['0','1'] [((0,'0'),[0]),((1,'0'),[0]),((0,'1'),[1]),((1,'1'),[1])] [0] [1]
+
+unionEndsWith1even1s = unionNFA endsWith1 even1s
+
+notEndsWith1 = complementNFA endsWith1
+
+notEven1s = complementNFA even1s
+
+intersectionEndsWith1even1s = intersectionNFA endsWith1 even1s

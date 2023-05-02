@@ -27,9 +27,11 @@ The function `accpets :: Ord a => DFA a -> wordDFA -> Maybe Bool`, checks weathe
 
 ### Additional functionality
 
-The functions complementDFA, intersectionDFA and unionDFA can be used to create new DFAs which accept complements, intersections or unions of the languages which are accepted by input DFAs.
+The functions `complementDFA`, `intersectionDFA` and `unionDFA` can be used to create new DFAs which accept complements, intersections or unions of the languages which are accepted by input DFAs.
 
 ## NFA.hs
 
 I have reassigned typesynonyms which should amount to generally cleaner code.
 So far I have implemented the `makeNFA` function, for an easy way to make new NFA's and the `acceptsNFA` function for a way to check weather an NFA accepts a word.
+
+I have started implementing `unionNFA`, `complementNFA` and `intersectionNFA`. This does not yet work the way as intended. The problem is, that the use of ε-edges messes up the way I was planning to implement `complementNFA`. I need to rethink on how to do this.
