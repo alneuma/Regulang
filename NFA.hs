@@ -1,32 +1,31 @@
 -- Copyright: (c) 2023, Alrik Neumann
 -- GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+-- Overview:
+--
+-- Here I chose to implement one of the more general definitions for NFAs. By this I mean:
+--
+-- - An NFA can have multiple start states i.e. there is a set of start states instead of a single one.
+-- - Arrows can be labeled with words over the alphabet of an NFA and not just with symbols.
+--   This also allows for epsilon-labeled arrows.
+
 module NFA (NFA, makeNFA, acceptsNFA) where
 
 import qualified Data.Set as S (Set, singleton, findIndex, size, toList, fromList, isSubsetOf, insert, cartesianProduct, empty, map, filter, null, member, union, difference, unions, disjoint, toAscList)
 import qualified Data.Maybe as M (fromJust) 
-import qualified Data.Bifunctor as BF (second)
+import qualified Data.Bifunctor as BF (first, second)
 
--- As for NFAs we want to allow for ε-labeled arrows we need a value of type Symbol to represent
--- the empty string. Although from a Haskell perspective it would make most sense to implement the Symbol type
--- as String I here chose to use Char as the default.
--- The ratio is that like this words will be Strings instead of lists of Strings, which will make it more comfortable
--- to interact with the module through ghci.
--- To change from Symbol = Char to Symbol = String, simply comment out the next two lines after the current comment
--- and uncomment the two lines following those. This should not effect program behavior
-type Symbol           = Char
-sempty                = '\0' :: Symbol
--- type Symbol           = String
--- sempty                = "" :: Symbol
-type Alphabet         = S.Set Symbol
-type Language         = S.Set [Symbol]
-type TransitionRule a = ((a,Symbol),S.Set a)
+type SymbolRL         = Char
+type WordRL           = [SymbolRL]
+emptyWord             = [] :: WordRL
+type AlphabetRL       = S.Set SymbolRL
+type LanguageRL       = S.Set WordRL
+type TransitionRule a = ((a,WordRL),S.Set a)
 type Delta a          = S.Set (TransitionRule a)
 type States a         = S.Set a
 
-
 data NFA a = NFA {states :: States a, 
-                  sigma :: Alphabet,
+                  sigma :: AlphabetRL,
                   delta :: Delta a,
                   start :: States a,
                   finish :: States a}
@@ -36,9 +35,12 @@ data NFA a = NFA {states :: States a,
 -- functions for creating and validating NFAs --
 ------------------------------------------------
 
--- Convinient way to create an NFA as it takes lists as arguments instead of sets.
--- The Symbol representing an empty word should be passed as sempty.
-makeNFA :: (Ord a) => [a] -> [Symbol] -> [((a,Symbol),[a])] -> [a] -> [a] -> Maybe (NFA a)
+-- Convenient way to create an NFA as it takes lists as arguments instead of sets.
+--
+-- In the type signature I write [SymbolRL] instead of WordRL, because the argument is
+-- not to be understood as a word, but as a list of symbols, that will be translated into a
+-- an alphabet i.e. a set of symbols.
+makeNFA :: (Ord a) => [a] -> [SymbolRL] -> [((a,WordRL),[a])] -> [a] -> [a] -> Maybe (NFA a)
 makeNFA states sigma delta start finish
   | validNFA newNFA = Just newNFA
   | otherwise       = Nothing
@@ -76,6 +78,10 @@ validNFA inputFA = True
 
 -- Takes and NFA and converts it into an equivalent NFA, which has Int type states starting
 -- with smallest
+-- This can be useful to "simplify" an NFA by "relabeling" it's states with integers, which otherwise
+-- often could be of Ord-type values.
+-- It also can be used to homogenise the type of different NFAs, which might be necessary for a number
+-- of operations.
 states2intNFA :: (Ord a) => Int -> NFA a -> NFA Int
 states2intNFA smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFinish
   where
@@ -87,67 +93,98 @@ states2intNFA smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFini
     transitionRule2int ((stateArg,symbol),stateSetVal) = ((state2int stateArg,symbol),S.map state2int stateSetVal)
 
 -- Takes two NFAs and returns an NFA that recognizes the language which is the union of
--- the languages recognized by the input NFA's
+-- the languages recognized by the input NFA's.
+-- While it could have been possible to make the return value of type NFA (a,b), instead of
+-- starting by converting both NFAs to NFA Int.
+-- This would have led to much more complicated code, as I could not just have used the union operation
+-- to merge the two NFAs.
 unionNFA :: (Ord a, Ord b) => NFA a -> NFA b -> NFA Int
 unionNFA nfa nfb = NFA newStates newSigma newDelta newStart newFinish
   where
-    newStates = S.insert 0 $ S.union (states nfaInt) (states nfbInt)
+    newStates = S.union (states nfaInt) (states nfbInt)
     newSigma  = S.union (sigma  nfaInt) (sigma  nfbInt)
-    newDelta  = S.unions [newEdges, delta  nfaInt, delta  nfbInt]
-    newStart  = S.singleton 0
+    newDelta  = S.union (delta  nfaInt) (delta  nfbInt)
+    newStart  = S.union (start  nfaInt) (start  nfbInt)
     newFinish = S.union (finish nfaInt) (finish nfbInt)
-    newEdges  = S.union (S.map makeEpsilonEdgeFrom0 $ start nfaInt)
-                        (S.map makeEpsilonEdgeFrom0 $ start nfbInt)
-    nfaInt = states2intNFA 1 nfa
-    nfbInt = states2intNFA ((+1) $ S.size $ states nfa) nfb
-    makeEpsilonEdgeFrom0 state = ((0,sempty),S.singleton state)
+    nfaInt = states2intNFA 0 nfa
+    nfbInt = states2intNFA (S.size $ states nfa) nfb
 
--- Takes an NFA and returns the NFA that recognizes the complement of the language recognized
--- by the input NFA.
--- The complement is the complement relative to all the words over sigma, the NFA's alphabet.
--- THIS IS THE BUGGY PART
--- PROBLEM: Epsilon-Edges do mess up the idea
-complementNFA :: (Ord a) => NFA a -> NFA a
-complementNFA nfa = nfa { finish = S.difference (states nfa) (finish nfa) }
-
--- Takes two NFAs and returns an NFA that recognizes the intersection of the two languages 
--- recognized by the input NFAs.
--- DOES NOT WORK CORRECTLY YET
-intersectionNFA :: (Ord a, Ord b) => NFA a -> NFA b -> NFA Int
-intersectionNFA nfa nfb = complementNFA $ unionNFA (complementNFA nfa) (complementNFA nfb)
+-- -- Takes an NFA and returns the NFA that recognizes the complement of the language recognized
+-- -- by the input NFA.
+-- -- The complement is the complement relative to all the words over sigma, the NFA's alphabet.
+-- -- THIS IS THE BUGGY PART
+-- -- PROBLEM: Epsilon-Edges do mess up the idea
+-- complementNFA :: (Ord a) => NFA a -> NFA a
+-- complementNFA nfa = nfa { finish = S.difference (states nfa) (finish nfa) }
+-- 
+-- -- Takes two NFAs and returns an NFA that recognizes the intersection of the two languages 
+-- -- recognized by the input NFAs.
+-- -- DOES NOT WORK CORRECTLY YET
+-- intersectionNFA :: (Ord a, Ord b) => NFA a -> NFA b -> NFA Int
+-- intersectionNFA nfa nfb = complementNFA $ unionNFA (complementNFA nfa) (complementNFA nfb)
 
 -----------------------------------------------------
 -- functions for checking if an NFA accepts a word --
 -----------------------------------------------------
 
--- returns Nothing when any Symbol of the input word is not in the NFA's alphabet (sigma).
--- returns Just True when the NFA accepts the input word
--- returns Just False otherwise
-acceptsNFA :: (Ord a) => NFA a -> [Symbol] -> Maybe Bool
-acceptsNFA nfa = go (start nfa)
+-- acceptsNFA:
+-- Verify if a word is accepted by a given NFA
+--
+-- Returns Nothing if the word does contain symbols which are not in the alphabet of the NFA.
+-- Otherwise returns Just True or Just False if the word was accepted or not accepted respectively
+--
+-- The general strategy is, that the symbols of the word will be examined one by one,
+-- each time modifying the set of reached states until no symbols are left anymore.
+-- Then it will be checked if there are members of the acceptable states (finish) inside of
+-- the set of reached states to see, if the word was accepted.
+-- 
+-- The main difficulties in this functions implementation is to devise a way by which
+-- to properly handle epsilon-labeled edges and edges which are labeled with words
+-- of length greater than 1.
+--
+-- The first difficulty is handled by the function processEpsilonEdgesNFA, which,
+-- given a set of transition rules (delta), takes a set of states and adds all the
+-- states to it, which are reachable from members of this set via epsilon-edges.
+--
+-- The second difficulty is handled by keeping track of partly resolved arrows,
+-- which are kept inside of the "pending" set, which is passed on alongside the set
+-- of reached states at each iteration
+--
+-- The single iterations are performed by the function nextStatesPendingNFA, which alongside the
+-- set of transition rules (delta) and the currently examined symbol of the input word, takes the
+-- set of currently reached states and a set of only partly resolved arrows (pending) as input and
+-- returns a tuple of the new reached states and the new partly resolved arrows.
+acceptsNFA :: (Ord a) => NFA a -> WordRL -> Maybe Bool
+acceptsNFA nfa word
+  | S.isSubsetOf (S.fromList word) (sigma nfa) = Just $ go (start nfa) S.empty word
+  | otherwise                                  = Nothing
   where
-    go stateSet [] = Just $ not $ S.disjoint (processEpsilonEdgesNFA (delta nfa) stateSet) (finish nfa) 
-    go stateSet (s:ss)
-      | s `S.member` sigma nfa = go (nextStateSetNFA (delta nfa) s stateSet) ss
-      | otherwise              = Nothing
+    go states pending []     = not $ S.disjoint (finish nfa) $ processEpsilonEdgesNFA (delta nfa) states
+    go states pending (s:ss) = go newStates newPending ss
+      where
+        (newStates,newPending) = nextStatesPendingNFA (delta nfa) s states pending
 
--- Processing the next symbol of a word consists in two steps:
---
--- First all the states reachable by following epsilon edges are added to the current state set.
--- Then the new state set is determined by following all the edges from states of the current state set that are
--- tagged with the symbol.
---
--- processEpsilonEdgesNFA performs the first step.
--- processNormalEdgesNFA performs the second step.
---
--- no error checking is needed, as the calling function (acceptsNFA) checks weather a symbol is part of the allowed alphabet
-nextStateSetNFA :: (Ord a) => Delta a -> Symbol -> States a -> States a
-nextStateSetNFA delta symbol = processNormalEdgesNFA delta symbol . processEpsilonEdgesNFA delta
+nextStatesPendingNFA :: (Ord a) => Delta a -> SymbolRL -> States a -> S.Set (WordRL,S.Set a) -> (States a, S.Set (WordRL,S.Set a))
+nextStatesPendingNFA delta symbol states pending = newStatesPending tmpPending
+  where
+    newStatesPending = go S.empty S.empty . S.toList
+      where
+        go accStates accPending [] = (accStates,accPending)
+        go accStates accPending (p:ps)
+          | fst p == emptyWord = go (S.union (snd p) accStates) accPending ps
+          | otherwise          = go accStates (S.insert p accPending) ps
+    tmpPending = S.union (reducePending pending) $ S.map (\t -> (tail $ snd $ fst t, snd t))
+                                                 $ S.filter (\t -> S.member (fst $ fst t) tmpStates)
+                                                 $ S.filter (\t -> head (snd $ fst t) == symbol)
+                                                 $ S.filter (\t -> snd (fst t) /= emptyWord)
+                                                 delta
+    tmpStates = processEpsilonEdgesNFA delta states
+    reducePending = S.map (BF.first tail) . S.filter ((==symbol) . head . fst)
 
 processEpsilonEdgesNFA :: (Ord a) => Delta a -> States a -> States a
 processEpsilonEdgesNFA delta = go
   where
-    deltaEpsilonEdges = S.filter ((==sempty) . snd . fst) delta
+    deltaEpsilonEdges = S.filter ((==emptyWord) . snd . fst) delta
     go stateSetOld
       | S.null stateSetNew = stateSetOld
       | otherwise          = go $ S.union stateSetOld stateSetNew
@@ -157,29 +194,28 @@ processEpsilonEdgesNFA delta = go
         -- by ε-edges.
         stateSetNew = S.difference (S.unions $ S.map snd $ S.filter ((`S.member`stateSetOld) . fst . fst) deltaEpsilonEdges) stateSetOld
 
-processNormalEdgesNFA :: (Ord a) => Delta a -> Symbol -> States a -> States a
-processNormalEdgesNFA delta symbol states = S.unions $ S.map snd $ S.filter ((`S.member`states) . fst . fst) $ S.filter ((==symbol) . snd . fst) delta
-
 ------------------
 -- example NFAs --
 ------------------
 
 -- zeros2div3div
 -- an NFA that has an alphabet that consists only of '0' and accepts any number of '0's that is divisible by 2 or 3
-zeros2div3div = M.fromJust $ makeNFA [0,1,2,3,4,5] ['0'] [((0,sempty),[1,3]),((1,'0'),[2]),((2,'0'),[1]),((3,'0'),[4]),((4,'0'),[5]),((5,'0'),[3])] [0] [1,3]
+zeros2div3div = M.fromJust $ makeNFA [0,1,2,3,4,5] ['0'] [((0,emptyWord),[1,3]),((1,['0']),[2]),((2,['0']),[1]),((3,['0']),[4]),((4,['0']),[5]),((5,['0']),[3])] [0] [1,3]
 
 zeros2div3divInt = states2intNFA 0 zeros2div3div
 
-notZeros2div3div = complementNFA zeros2div3div
+-- notZeros2div3div = complementNFA zeros2div3div
 
-even1s = M.fromJust $ makeNFA [0,1] ['0','1'] [((0,'0'),[0]),((1,'0'),[1]),((0,'1'),[1]),((1,'1'),[0])] [0] [0]
+even1s = M.fromJust $ makeNFA [0,1] ['0','1'] [((0,['0']),[0]),((1,['0']),[1]),((0,['1']),[1]),((1,['1']),[0])] [0] [0]
 
-endsWith1 = M.fromJust $ makeNFA [0,1] ['0','1'] [((0,'0'),[0]),((1,'0'),[0]),((0,'1'),[1]),((1,'1'),[1])] [0] [1]
+endsWith1 = M.fromJust $ makeNFA [0,1] ['0','1'] [((0,['0']),[0]),((1,['0']),[0]),((0,['1']),[1]),((1,['1']),[1])] [0] [1]
+
+abc = M.fromJust $ makeNFA [0,1] ['a','b','c'] [((0,"abc"),[1])] [0] [1]
 
 unionEndsWith1even1s = unionNFA endsWith1 even1s
 
-notEndsWith1 = complementNFA endsWith1
+-- notEndsWith1 = complementNFA endsWith1
 
-notEven1s = complementNFA even1s
+-- notEven1s = complementNFA even1s
 
-intersectionEndsWith1even1s = intersectionNFA endsWith1 even1s
+-- intersectionEndsWith1even1s = intersectionNFA endsWith1 even1s
