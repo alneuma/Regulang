@@ -11,7 +11,7 @@
 
 module NFA (NFA, makeNFA, acceptsNFA) where
 
-import qualified Data.Set as S (Set, singleton, findIndex, size, toList, fromList, isSubsetOf, insert, cartesianProduct, empty, map, filter, null, member, union, difference, unions, disjoint, toAscList)
+import qualified Data.Set as S (Set, singleton, findIndex, size, toList, fromList, isSubsetOf, insert, cartesianProduct, empty, map, filter, null, member, union, difference, unions, disjoint, toAscList, foldl')
 import qualified Data.Maybe as M (fromJust) 
 import qualified Data.Bifunctor as BF (first, second)
 
@@ -19,7 +19,9 @@ type SymbolRL         = Char
 type WordRL           = [SymbolRL]
 emptyWord             = [] :: WordRL
 type AlphabetRL       = S.Set SymbolRL
-type LanguageRL       = S.Set WordRL
+-- I chose to implement languages as lists instead of sets, as they will often be infinite
+-- and sets from Data.Set should only have finite size
+type LanguageRL       = [WordRL]
 type TransitionRule a = ((a,WordRL),S.Set a)
 type Delta a          = S.Set (TransitionRule a)
 type States a         = S.Set a
@@ -109,6 +111,27 @@ unionNFA nfa nfb = NFA newStates newSigma newDelta newStart newFinish
     nfaInt = states2intNFA 0 nfa
     nfbInt = states2intNFA (S.size $ states nfa) nfb
 
+-- removeEpsilonEdges
+--
+-- converts an NFA into an NFA that recognizes the same language, but does not
+-- contain any edges labeled with the empty word.
+--
+-- DOES NOT WORK AS INTENDED YET
+removeEpsilonEdges :: (Ord a) => NFA a -> NFA a
+removeEpsilonEdges nfa = nfa {delta = newDelta}
+  where
+    newDelta = go (delta nfa) $ getEpsilonEdges $ delta nfa
+    getEpsilonEdges = S.filter (\t -> snd (fst t) == emptyWord)
+    go allEdges epsilonEdges
+      | S.null epsilonEdges = allEdges
+      | otherwise           = go newAllEdges $ getEpsilonEdges newAllEdges
+      where
+        newAllEdges = S.difference (S.union allEdges addedEdges) epsilonEdges
+        addedEdges  = S.unions $ S.map newEdges1 epsilonEdges
+        newEdges1 e = S.map (\t -> ((fst $ fst e, snd $ fst t), snd t)) $
+                      S.filter (\t -> S.member (fst $ fst t) (snd e))
+                      allEdges
+
 -- -- Takes an NFA and returns the NFA that recognizes the complement of the language recognized
 -- -- by the input NFA.
 -- -- The complement is the complement relative to all the words over sigma, the NFA's alphabet.
@@ -194,9 +217,41 @@ processEpsilonEdgesNFA delta = go
         -- by ε-edges.
         stateSetNew = S.difference (S.unions $ S.map snd $ S.filter ((`S.member`stateSetOld) . fst . fst) deltaEpsilonEdges) stateSetOld
 
-------------------
--- example NFAs --
-------------------
+-----------------------
+-- Kleene-operations --
+-----------------------
+
+-- returns a List of all possible lists with elements from the input set of length of the input number
+kleeneNumber :: (Ord a) => Int -> S.Set a -> [[a]]
+kleeneNumber 0 _   = [[]]
+kleeneNumber n set = (:) <$> S.toList set <*> kleeneNumber (n-1) set
+
+kleeneStar :: (Ord a) => S.Set a -> [[a]]
+kleeneStar set
+  | S.null set = [[]]
+  | otherwise  = concatMap (`kleeneNumber` set) [0..]
+
+kleenePlus :: (Ord a) => S.Set a -> [[a]]
+kleenePlus = tail . kleeneStar
+
+--kleeneStar :: (Ord a) => S.Set a -> [[a]]
+--kleeneStar set = concat $ go [[[]]]
+--  where
+--    go list = list ++ [(:) <$> S.toList set <*> concat list]
+
+--------------------------------
+-- testing and comparing NFAs --
+--------------------------------
+
+acceptSameWord :: (Ord a) => NFA a -> NFA a -> WordRL -> Bool
+acceptSameWord nfa nfb word = acceptsNFA nfa word == acceptsNFA nfb word
+
+acceptSameLanguage :: (Ord a) => Int -> NFA a -> NFA a -> LanguageRL -> Bool
+acceptSameLanguage n nfa nfb lang = all (acceptSameWord nfa nfb) $ take n lang
+
+------------------------------
+-- example and testing NFAs --
+------------------------------
 
 -- zeros2div3div
 -- an NFA that has an alphabet that consists only of '0' and accepts any number of '0's that is divisible by 2 or 3
@@ -219,3 +274,5 @@ unionEndsWith1even1s = unionNFA endsWith1 even1s
 -- notEven1s = complementNFA even1s
 
 -- intersectionEndsWith1even1s = intersectionNFA endsWith1 even1s
+
+zeros2div3divNoEps = removeEpsilonEdges zeros2div3div
