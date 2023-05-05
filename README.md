@@ -17,7 +17,7 @@ There are two modules:
 ### Basic functionality
 
 The module revolves around the DFA data constructor which is of kind `(* -> *)`
-It should always be fed an Ord-type as argument as this is what pretty much all the functions in this module expect. When making new DFAs the recommended way, checking for this will be done automatically.
+It should always be fed an Ord-type as argument. This type-variable is the type, which is used to represent the states of the DFA.
 
 All the parts of a DFA which are sets in the mathematical definition of a DFA are implemented as Sets from the Data.Set module. Nonetheless there is a function provided (`makeDFA`) which constructs a new DFA from lists instead of sets, checking the new DFA's validity while doing so. This should generally be the most convenient way to make new DFAs. Checking a DFA's validity after creation is necessary, as all the functions (except `valdiDFA`) that expect DFAs as arguments do assume their validity and will generally not recover from getting fed invalid ones.
 
@@ -31,8 +31,10 @@ The functions `complementDFA`, `intersectionDFA` and `unionDFA` can be used to c
 
 ## NFA.hs
 
-This implements the NFA data constructor `(* -> *)`, which like the DFA data constructor takes a type-variable of class Ord.
+This implements the NFA data constructor `(* -> *)`, which like the DFA data constructor takes a type-variable of class Ord, which is used to represent the states of the NFA.
 
 I chose to implement one of the more general definitions of NFAs which allows for multiple start states, swell as arrows, which take whole words as labels, including the empty word, instead of just symbols.
 
-So far I have implemented the `makeNFA` function, for an easy way to make new NFA's and the `acceptsNFA` function for a way to check weather an NFA accepts a given word.
+`makeNFA` and `acceptsNFA` work like their equivalents in `DFA.hs`.
+
+Currently I am working at functionality that will tranform any NFA into an NFA that only has words of length 1 as labels on it's arrows but recognizes the same language.

@@ -111,26 +111,26 @@ unionNFA nfa nfb = NFA newStates newSigma newDelta newStart newFinish
     nfaInt = states2intNFA 0 nfa
     nfbInt = states2intNFA (S.size $ states nfa) nfb
 
--- removeEpsilonEdges
+-- removeEmptyEdges
 --
 -- converts an NFA into an NFA that recognizes the same language, but does not
 -- contain any edges labeled with the empty word.
 --
--- DOES NOT WORK AS INTENDED YET
-removeEpsilonEdges :: (Ord a) => NFA a -> NFA a
-removeEpsilonEdges nfa = nfa {delta = newDelta}
+removeEmptyEdges :: (Ord a) => NFA a -> NFA a
+removeEmptyEdges nfa = nfa {delta = newDelta, start = newStart}
   where
-    newDelta = go (delta nfa) $ getEpsilonEdges $ delta nfa
-    getEpsilonEdges = S.filter (\t -> snd (fst t) == emptyWord)
-    go allEdges epsilonEdges
-      | S.null epsilonEdges = allEdges
-      | otherwise           = go newAllEdges $ getEpsilonEdges newAllEdges
+    newStart = processEmptyEdgesNFA (delta nfa) (start nfa)
+    newDelta = go (delta nfa) (emptyEdges $ delta nfa)
+    go delt eps
+      | S.null eps = delt
+      | otherwise  = go tmpDelta $ emptyEdges tmpDelta
       where
-        newAllEdges = S.difference (S.union allEdges addedEdges) epsilonEdges
-        addedEdges  = S.unions $ S.map newEdges1 epsilonEdges
-        newEdges1 e = S.map (\t -> ((fst $ fst e, snd $ fst t), snd t)) $
-                      S.filter (\t -> S.member (fst $ fst t) (snd e))
-                      allEdges
+        tmpDelta = S.difference (S.union delt $ newEdges eps) eps
+        newEdges es = S.unions $ S.map newEdges1 eps
+        newEdges1 e =   S.map (\((q,s),qs) -> ((fst $ fst e,s),qs))
+                      $ S.filter (\t -> S.member (fst $ fst t) (snd e))
+                        delt
+    emptyEdges = S.filter (\t -> snd (fst t) == emptyWord)
 
 -- -- Takes an NFA and returns the NFA that recognizes the complement of the language recognized
 -- -- by the input NFA.
@@ -165,7 +165,7 @@ removeEpsilonEdges nfa = nfa {delta = newDelta}
 -- to properly handle epsilon-labeled edges and edges which are labeled with words
 -- of length greater than 1.
 --
--- The first difficulty is handled by the function processEpsilonEdgesNFA, which,
+-- The first difficulty is handled by the function processEmptyEdgesNFA, which,
 -- given a set of transition rules (delta), takes a set of states and adds all the
 -- states to it, which are reachable from members of this set via epsilon-edges.
 --
@@ -182,7 +182,7 @@ acceptsNFA nfa word
   | S.isSubsetOf (S.fromList word) (sigma nfa) = Just $ go (start nfa) S.empty word
   | otherwise                                  = Nothing
   where
-    go states pending []     = not $ S.disjoint (finish nfa) $ processEpsilonEdgesNFA (delta nfa) states
+    go states pending []     = not $ S.disjoint (finish nfa) $ processEmptyEdgesNFA (delta nfa) states
     go states pending (s:ss) = go newStates newPending ss
       where
         (newStates,newPending) = nextStatesPendingNFA (delta nfa) s states pending
@@ -201,11 +201,11 @@ nextStatesPendingNFA delta symbol states pending = newStatesPending tmpPending
                                                  $ S.filter (\t -> head (snd $ fst t) == symbol)
                                                  $ S.filter (\t -> snd (fst t) /= emptyWord)
                                                  delta
-    tmpStates = processEpsilonEdgesNFA delta states
+    tmpStates = processEmptyEdgesNFA delta states
     reducePending = S.map (BF.first tail) . S.filter ((==symbol) . head . fst)
 
-processEpsilonEdgesNFA :: (Ord a) => Delta a -> States a -> States a
-processEpsilonEdgesNFA delta = go
+processEmptyEdgesNFA :: (Ord a) => Delta a -> States a -> States a
+processEmptyEdgesNFA delta = go
   where
     deltaEpsilonEdges = S.filter ((==emptyWord) . snd . fst) delta
     go stateSetOld
@@ -247,7 +247,10 @@ acceptSameWord :: (Ord a) => NFA a -> NFA a -> WordRL -> Bool
 acceptSameWord nfa nfb word = acceptsNFA nfa word == acceptsNFA nfb word
 
 acceptSameLanguage :: (Ord a) => Int -> NFA a -> NFA a -> LanguageRL -> Bool
-acceptSameLanguage n nfa nfb lang = all (acceptSameWord nfa nfb) $ take n lang
+acceptSameLanguage n nfa nfb = all (acceptSameWord nfa nfb) . take n
+
+acceptsLanguageVector :: (Ord a) => Int -> NFA a -> LanguageRL -> [Maybe Bool]
+acceptsLanguageVector n nfa = take n . map (acceptsNFA nfa)
 
 ------------------------------
 -- example and testing NFAs --
@@ -275,4 +278,6 @@ unionEndsWith1even1s = unionNFA endsWith1 even1s
 
 -- intersectionEndsWith1even1s = intersectionNFA endsWith1 even1s
 
-zeros2div3divNoEps = removeEpsilonEdges zeros2div3div
+zeros2div3divNoEps = removeEmptyEdges zeros2div3div
+
+testOK = acceptSameLanguage 20 zeros2div3div zeros2div3divNoEps $ kleeneStar $ S.fromList ['0']
