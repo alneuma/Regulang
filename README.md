@@ -5,36 +5,158 @@ GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/license
 
 # Finite Automations and Regular Languages in Haskell
 
-I am implementing these small modules to help me study theory of computation.
-There are two modules:
-
-`DFA.hs` implements [deterministic finite automations](https://en.wikipedia.org/wiki/Deterministic_finite_automaton) (DFAs) only. I have written this first and the code is likely less clean.
-
-`NFA.hs` implements the more general case of [non-deterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs) and treats DFAs merely as a special case of NFAs, as they mathematically are.
-
-## DFA.hs
-
-### Basic functionality
-
-The module revolves around the DFA data constructor which is of kind `(* -> *)`
-It should always be fed an Ord-type as argument. This type-variable is the type, which is used to represent the states of the DFA.
-
-All the parts of a DFA which are sets in the mathematical definition of a DFA are implemented as Sets from the Data.Set module. Nonetheless there is a function provided (`makeDFA`) which constructs a new DFA from lists instead of sets, checking the new DFA's validity while doing so. This should generally be the most convenient way to make new DFAs. Checking a DFA's validity after creation is necessary, as all the functions (except `valdiDFA`) that expect DFAs as arguments do assume their validity and will generally not recover from getting fed invalid ones.
-
-Symbols (`Symbol`) are implemented as `Char` and words (`WordDFA`) as `String`.
-
-The function `accpets :: Ord a => DFA a -> wordDFA -> Maybe Bool`, checks weather a DFA accepts a word.
-
-### Additional functionality
-
-The functions `complementDFA`, `intersectionDFA` and `unionDFA` can be used to create new DFAs which accept complements, intersections or unions of the languages which are accepted by input DFAs.
+I am implementing this small module to help me study regular languages and the theory of computation.
+The goal is to implement different types of Representations of regular languages and make it possible to translate between them.
+So far I have implemented some functionality for [nondeterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs), enclosed in the `NFA.hs` file. [Deterministic finite automations](https://en.wikipedia.org/wiki/Deterministic_finite_automaton) (DFAs) are treated as a special case of NFAs, as they mathematically are.
 
 ## NFA.hs
 
-This implements the NFA data constructor `(* -> *)`, which like the DFA data constructor takes a type-variable of class Ord, which is used to represent the states of the NFA.
+Depends on `Data.Set`
 
-I chose to implement one of the more general definitions of NFAs which allows for multiple start states, swell as arrows, which take whole words as labels, including the empty word, instead of just symbols.
+### Creating and analysing NFAs
 
-`makeNFA` and `acceptsNFA` work like their equivalents in `DFA.hs`.
+#### NFA
+```haskell
+data NFA a
+```
+The typev-ariable should be an Ord-Type, as pretty much all the functions depend on that.
 
-Currently I am working at functionality that will tranform any NFA into an NFA that only has words of length 1 as labels on it's arrows but recognizes the same language.
+I chose to implement one of the more general definitions of NFAs which allows for multiple start states, aswell as arrows that, instead of just symbols, take whole words as labels including the empty word. 
+
+
+#### makeNFA
+```haskell
+makeNFA :: (Ord a) => [a] -> [SymbolRL] -> [((a,WordRL),[a])] -> [a] -> [a] -> Maybe (NFA a)
+```
+Convenient way to create an NFA as it takes lists as arguments instead of sets.
+
+In the type signature I write [SymbolRL] instead of WordRL, because the argument is
+not to be understood as a word, but as a list of symbols, that will be translated into a
+an alphabet i.e. a set of symbols.
+
+#### validNFA
+*Not yet implemented!*
+```haskell
+validNFA :: (Ord a) => NFA a -> Bool
+```
+Checks if an NFA is defined correctly.
+Returns False if any of the following holds
+- start is no subset of states
+- finish is no subset of states
+- not all left entries of delta have their left entries in states or their right entry as an empty
+  list or with a single argument, that is in sigma
+- the set of the right entries of delta is not a subset of states
+Otherwise returns True.
+
+#### validDFA
+*Not yet implemented!*
+```haskell
+validDFA :: (Ord a) => NFA a -> Bool
+```
+Checks if an NFA is a valid DFA.
+
+### Manipulating NFAs
+
+#### toIntNFA
+```haskell
+toIntNFA :: (Ord a) => Int -> NFA a -> NFA Int
+```
+Takes and NFA and converts it into an equivalent NFA, which has Int type states starting
+with smallest
+This can be useful to "simplify" an NFA by "relabeling" it's states with integers, which otherwise
+often could be of Ord-type values.
+It also can be used to homogenise the type of different NFAs, which might be necessary for a number
+of operations.
+
+#### union
+```haskell
+union :: (Ord a, Ord b) => NFA a -> NFA b -> NFA Int
+```
+Takes two NFAs and returns an NFA that recognizes the language which is the union of
+the languages recognized by the input NFAs.
+While it could have been possible to make the return value of type NFA (a,b), instead of
+starting by converting both NFAs to NFA Int.
+This would have led to much more complicated code, as I could not just have used the union operation
+to merge the two NFAs.
+
+#### replaceEmptyEdges
+```haskell
+replaceEmptyEdges :: (Ord a) => NFA a -> NFA a
+```
+converts an NFA into an NFA that recognizes the same language, but does not
+contain any edges labeled with the empty word.
+
+#### replaceWordEdges
+```haskell
+replaceWordEdges :: (Ord a) => NFA a -> NFA Int
+```
+Replaces all the edges of an NFA that are labeled with words of length > 1, 
+in a way, that produces an equivalent NFA, that does not have such edges.
+
+Before the rest of the calculation, we convert the NFA into an NFA
+with Int states, as this makes it easier to handle the creation of new states,
+which is necessary for this function.
+
+#### replaceSetValueEdges
+```haskell
+replaceSetValueEdges :: (Ord a) => NFA a -> NFA a
+```
+Makes an equivalent NFA, that is described only by edges pointing to singleton sets,
+not to sets of size > 1.
+
+#### pruneUnreachable
+```haskell
+pruneUnreachable :: (Ord a) => NFA a -> NFA a
+```
+Prunes away all the states and edges from an NFA, that can never be reached
+
+### Analysing Recognized Languages
+
+#### accepts
+```haskell
+accepts :: (Ord a) => NFA a -> WordRL -> Maybe Bool
+```
+Verify if a word is accepted by a given NFA
+
+Returns Nothing if the word does contain symbols which are not in the alphabet of the NFA.
+Otherwise returns Just True or Just False if the word was accepted or not accepted respectively
+
+### Kleene-operations
+
+#### kleeneNumber
+```haskell
+kleeneNumber :: (Ord a) => Int -> S.Set a -> [[a]]
+```
+Returns a List of all possible lists with elements from the input set of length of the input number.
+
+#### kleeneStar
+```haskell
+kleeneStar :: (Ord a) => S.Set a -> [[a]]
+```
+Returns a list of all finite lists composable by the elements of the input set.
+
+#### kleenePlus
+```haskell
+kleenePlus :: (Ord a) => S.Set a -> [[a]]
+```
+Returns a list of all finite lists composable by the elements of the input set, leaves out the empty list.
+
+### Testing and Comparing NFAs
+
+#### acceptSameWord
+```haskell
+acceptSameWord :: (Ord a) => NFA a -> NFA a -> WordRL -> Bool
+```
+Checks if two NFAs are equal relative to their acceptance of a word.
+
+#### recognizeSameLanguage
+```haskell
+recognizeSameLanguage :: (Ord a) => Int -> NFA a -> NFA a -> LanguageRL -> Bool
+```
+Checks if two NFA are equal relative to their acceptance of the first `n` word of a Language, where `n` is the input number.
+
+#### recognizeLanguageVector
+```haskell
+recognizeLanguageVector :: (Ord a) => Int -> NFA a -> LanguageRL -> [Maybe Bool]
+```
+Shows the acceptance of a NFA for the first `n` words of a Language, where `n` is the input number.
