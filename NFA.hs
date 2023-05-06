@@ -1,19 +1,12 @@
 -- Copyright: (c) 2023, Alrik Neumann
 -- GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
 
--- Overview:
---
--- Here I chose to implement one of the more general definitions for NFAs. By this I mean:
---
--- - An NFA can have multiple start states i.e. there is a set of start states instead of a single one.
--- - Arrows can be labeled with words over the alphabet of an NFA and not just with symbols.
---   This also allows for epsilon-labeled arrows.
+module NFA (NFA,makeNFA,accepts,getReachableStates,getCoReachableStates,getTrimStates,removeStates,simplify,toIntNFA,union,replaceEmptyEdges,replaceWordEdges,replaceSetValuedEdges,kleeneNumber,kleeneStar,kleenePlus) where
 
-module NFA (NFA,makeNFA, accepts,toIntNFA,union,replaceEmptyEdges,replaceWordEdges,replaceSetValueEdges,pruneUnreachable,kleeneNumber,kleeneStar,kleenePlus) where
-
-import qualified Data.Set as S (Set, singleton, findIndex, size, toList, fromList, isSubsetOf, insert, cartesianProduct, empty, map, filter, null, member, union, intersection, difference, unions, disjoint, toAscList, foldl')
-import qualified Data.Maybe as M (fromJust) 
+import qualified Data.Maybe     as M  (fromJust) 
 import qualified Data.Bifunctor as BF (first, second)
+import qualified Text.Printf    as P  (printf)
+import qualified Data.Set       as S  (Set, singleton, findIndex, size, toList, fromList, isSubsetOf, insert, cartesianProduct, empty, map, filter, null, member, union, intersection, difference, unions, disjoint, toAscList, foldl')
 
 type SymbolRL         = Char
 type WordRL           = [SymbolRL]
@@ -32,7 +25,7 @@ data NFA a = NFA {states :: States a,
                   delta  :: Delta a,
                   start  :: States a,
                   finish :: States a}
-                  deriving (Show, Eq)
+                  deriving Eq
 
 -- regular expressions
 data RegEx = RE SymbolRL
@@ -95,6 +88,28 @@ validNFA inputFA = True
 --     deltaLeft  = S.map ((\(arg,[val]) -> (arg,val)) . fst) (delta inputFA)
 --     deltaRight = S.map snd (delta inputFA)
 
+getTrimStates :: (Ord a) => NFA a -> States a
+getTrimStates nfa = S.intersection (getReachableStates nfa) (getCoReachableStates nfa)
+
+getCoReachableStates :: (Ord a) => NFA a -> States a
+getCoReachableStates nfa = extendStatesByRule nfa followEdgesBackwards $ finish nfa
+  where
+    followEdgesBackwards states = S.difference newStates states
+      where
+        newStates = S.map (fst . fst)
+                  $ S.filter (not . S.null . (`S.intersection` states) . snd)
+                  $ delta nfa
+
+getReachableStates :: (Ord a) => NFA a -> States a
+getReachableStates nfa = extendStatesByRule nfa followEdges $ start nfa
+  where
+    followEdges states = S.difference newStates states
+      where
+        newStates = S.unions
+                  $ S.map snd
+                  $ S.filter ((`S.member` states) . fst . fst)
+                  $ delta nfa
+
 ----------------------------------------------------
 -- operations for creating new NFAs from old ones --
 ----------------------------------------------------
@@ -149,9 +164,8 @@ replaceEmptyEdges nfa = nfa {delta = newDelta, start = newStart}
       where
         tmpDelta = S.difference (S.union delt $ newEdges eps) eps
         newEdges es = S.unions $ S.map newEdges1 eps
-        newEdges1 e =   S.map (\((q,s),qs) -> ((fst $ fst e,s),qs))
-                      $ S.filter (\t -> S.member (fst $ fst t) (snd e))
-                        delt
+        newEdges1 e = S.map (\((q,s),qs) -> ((fst $ fst e,s),qs))
+                    $ S.filter (\t -> S.member (fst $ fst t) (snd e)) delt
 
 -- replaceWordEdges
 --
@@ -179,30 +193,55 @@ replaceWordEdges nfa = tmpNFA {states = newStates, delta = newDelta}
         addedEdges  = zip (zip (fst (fst e) : addedStates) (map (:[]) $ snd $ fst e))
                           (map S.singleton addedStates ++ [snd e])
 
--- replaceSetValueEdges
+-- replaceSetValuedEdges
 --
 -- Makes an equivalent NFA, that is described only by edges pointing to singleton sets,
 -- not to sets of size > 1.
 --
-replaceSetValueEdges :: (Ord a) => NFA a -> NFA a
-replaceSetValueEdges nfa = nfa {delta = newDelta}
+replaceSetValuedEdges :: (Ord a) => NFA a -> NFA a
+replaceSetValuedEdges nfa = nfa {delta = newDelta}
   where
     wordDelta  = S.filter ((>1) . S.size . snd) $ delta nfa
     addedDelta = S.unions $ S.map split1 wordDelta
     split1 ((q,w),qs) = S.map (\r -> ((q,w),S.singleton r)) qs
     newDelta          = S.union addedDelta $ S.difference (delta nfa) wordDelta
 
-pruneUnreachable :: (Ord a) => NFA a -> NFA a
-pruneUnreachable nfa
-  | S.size (states nfa) == S.size newStates = nfa
-  | otherwise                               = pruneUnreachable $
-                                              nfa {states = newStates,
-                                                   delta  = newDelta,
-                                                   finish = newFinish}
+removeStates :: (Ord a) => NFA a -> States a -> NFA a
+removeStates nfa statesToRemove = nfa {states = newStates,
+                                       delta  = newDelta,
+                                       start  = newStart,
+                                       finish = newFinish}
   where
-    newDelta  = S.filter (\t -> S.member (fst $ fst t) newStates) $ delta nfa
-    newStates = S.union (start nfa) $ S.unions $ S.map snd $ delta nfa
-    newFinish = S.intersection newStates $ finish nfa
+    removeThemFrom = (`S.difference` statesToRemove)
+    newStates = removeThemFrom $ states nfa
+    newStart  = removeThemFrom $ start  nfa
+    newFinish = removeThemFrom $ finish nfa
+    newDelta  = S.map (BF.second removeThemFrom)
+              $ S.filter ((`S.member` newStates) . fst . fst)
+              $ delta nfa
+
+simplify :: (Ord a) => NFA a -> NFA a
+simplify nfa = removeStates nfa (S.difference (states nfa) $ getTrimStates nfa)
+
+-- private function, used for a number of other functions
+-- 
+-- Given an NFA, a set of states and a rule that specifies, how to add states to an already existing set of states
+-- The input set of states will be iteratively expanded by this rule until no more new states get added.
+--
+-- Two important notes:
+-- - To avoid an infinite repetition it is vital, that the rule is composed in a way, that
+--   That it's input and output set don't share any members.
+-- - It should be kept in mind, that for each iteration only the set of newly added states
+--   will be the input for the rule of the next iteration. The merging of all the so created
+--   sets does happen later.
+--   This is because it is assumed, that a state does not have anything further to contribute after
+--   it was used once as element of the input state for the rule.
+--   Make sure, that the rule is written in a way that what states are newly derived from it
+--   does only depend on each state of the input set individually.
+extendStatesByRule :: (Ord a) => NFA a -> (States a -> States a) -> States a -> States a
+extendStatesByRule nfa rule = S.unions . takeWhile (not . S.null) . applyRepeatedly rule
+  where
+    applyRepeatedly f x = x : applyRepeatedly f (f x)
 
 -----------------------------------------------------
 -- functions for checking if an NFA accepts a word --
@@ -254,11 +293,11 @@ nextStatesPending delta symbol states pending = newStatesPending tmpPending
         go accStates accPending (p:ps)
           | fst p == emptyWord = go (S.union (snd p) accStates) accPending ps
           | otherwise          = go accStates (S.insert p accPending) ps
-    tmpPending = S.union (reducePending pending) $ S.map (\t -> (tail $ snd $ fst t, snd t))
-                                                 $ S.filter (\t -> S.member (fst $ fst t) tmpStates)
-                                                 $ S.filter (\t -> head (snd $ fst t) == symbol)
-                                                 $ S.filter (\t -> snd (fst t) /= emptyWord)
-                                                 delta
+    tmpPending = S.union (reducePending pending)
+               $ S.map (\t -> (tail $ snd $ fst t, snd t))
+               $ S.filter (\t -> S.member (fst $ fst t) tmpStates)
+               $ S.filter (\t -> head (snd $ fst t) == symbol)
+               $ S.filter (\t -> snd (fst t) /= emptyWord) delta
     tmpStates = processEmptyEdges delta states
     reducePending = S.map (BF.first tail) . S.filter ((==symbol) . head . fst)
 
@@ -310,6 +349,29 @@ recognizeSameLanguage n nfa nfb = all (acceptSameWord nfa nfb) . take n
 recognizeLanguageVector :: (Ord a) => Int -> NFA a -> LanguageRL -> [Maybe Bool]
 recognizeLanguageVector n nfa = take n . map (accepts nfa)
 
+---------------------
+-- displaying NFAs --
+---------------------
+
+instance (Show a) => Show (NFA a) where
+    -- show :: (Show a) => NFA a -> String
+    show nfa = "States:\t" ++ showSet   (states nfa) ++ "\n" ++
+               "Sigma:\t"  ++ showSet   (sigma  nfa) ++ "\n" ++
+               "Delta:\t"  ++ showDelta (delta  nfa) ++
+               "Start:\t"  ++ showSet   (start  nfa) ++ "\n" ++
+               "Finish:\t" ++ showSet   (finish nfa)
+      where
+        showDelta delta = showEdge (head elementsDelta) ++ concatMap (("\t" ++) . showEdge) (tail elementsDelta)
+          where elementsDelta = S.toAscList delta
+        showEdge ((q,s),qs) = "(" ++ show q ++ ", " ++ show s ++ ")\t-> " ++ showSet qs ++ "\n"
+
+showSet :: (Show a) => S.Set a -> String
+showSet set
+  | S.null set = "{}"
+  | otherwise  = "{" ++ show (head elements) ++ concatMap (("," ++) . show) (tail elements) ++ "}"
+  where
+    elements = S.toAscList set
+
 ------------------------------
 -- example and testing NFAs --
 ------------------------------
@@ -341,3 +403,5 @@ unionEndsWith1even1s = endsWith1 `union` even1s
 zeros2div3divNoEps = replaceEmptyEdges zeros2div3div
 
 testReplaceEmptyEdges = recognizeSameLanguage 20 zeros2div3div zeros2div3divNoEps $ kleeneStar $ S.fromList ['0']
+
+testTrimNFA = M.fromJust $ makeNFA [0..10] "0" (zip (zip [1,2,3,5,7,8,9,10] $ repeat ['0']) [[2,5],[3],[4],[6],[8],[4],[10],[9]]) [1] [4]

@@ -9,26 +9,23 @@ I am implementing this small module to help me study regular languages and the t
 The goal is to implement different types of Representations of regular languages and make it possible to translate between them.
 So far I have implemented some functionality for [nondeterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs), enclosed in the `NFA.hs` file. [Deterministic finite automations](https://en.wikipedia.org/wiki/Deterministic_finite_automaton) (DFAs) are treated as a special case of NFAs, as they mathematically are.
 
-## NFA.hs
-
-Depends on `Data.Set`
-
 ### Creating and analysing NFAs
 
 #### NFA
 ```haskell
 data NFA a
 ```
-The typev-ariable should be an Ord-Type, as pretty much all the functions depend on that.
+The type-variable should be an Ord-Type, as pretty much all the functions depend on this.
 
-I chose to implement one of the more general definitions of NFAs which allows for multiple start states, aswell as arrows that, instead of just symbols, take whole words as labels including the empty word. 
+I chose to implement one of the more general definitions of NFAs which allows for multiple start states, as well as arrows that, instead of just symbols, take whole words as labels including the empty word. 
 
 
 #### makeNFA
 ```haskell
 makeNFA :: (Ord a) => [a] -> [SymbolRL] -> [((a,WordRL),[a])] -> [a] -> [a] -> Maybe (NFA a)
 ```
-Convenient way to create an NFA as it takes lists as arguments instead of sets.
+
+Make an NFA without the directly applying the data constructor, which would need to be supplied with `Set` type values from `Data.Set`.
 
 In the type signature I write [SymbolRL] instead of WordRL, because the argument is
 not to be understood as a word, but as a list of symbols, that will be translated into a
@@ -55,60 +52,69 @@ validDFA :: (Ord a) => NFA a -> Bool
 ```
 Checks if an NFA is a valid DFA.
 
+#### getReachableStates
+```haskell
+getReachableStates :: (Ord a) => NFA a -> States a
+```
+Returns all the states of an NFA, which can be directly or indirectly reached from at least one of the start states.
+
+#### getCoReachableStates
+```haskell
+getCoReachableStates :: (Ord a) => NFA a -> States a
+```
+Returns all the states of an NFA, from where an acceptance state can be reached directly or indirectly.
+
+#### getTrimStates
+```haskell
+getTrimStates :: (Ord a) => NFA a -> States a
+```
+Returns all the states of an NFA, that satisfy the condition from `getReachableStates` as well as the one from `getCoReachableStates`.
+
 ### Manipulating NFAs
 
 #### toIntNFA
 ```haskell
 toIntNFA :: (Ord a) => Int -> NFA a -> NFA Int
 ```
-Takes and NFA and converts it into an equivalent NFA, which has Int type states starting
-with smallest
-This can be useful to "simplify" an NFA by "relabeling" it's states with integers, which otherwise
-often could be of Ord-type values.
-It also can be used to homogenise the type of different NFAs, which might be necessary for a number
-of operations.
+Takes and NFA and converts it into an equivalent NFA, which has Int type states starting with smallest
+This can be useful to "simplify" an NFA by "relabeling" it's states with integers starting from `0`.
+It also can be used to homogenise the type of different NFAs, To prepare for other operations.
 
 #### union
 ```haskell
 union :: (Ord a, Ord b) => NFA a -> NFA b -> NFA Int
 ```
-Takes two NFAs and returns an NFA that recognizes the language which is the union of
-the languages recognized by the input NFAs.
-While it could have been possible to make the return value of type NFA (a,b), instead of
-starting by converting both NFAs to NFA Int.
-This would have led to much more complicated code, as I could not just have used the union operation
-to merge the two NFAs.
+Takes two NFAs and returns an NFA that recognizes the language which is the union of the languages recognized by the input NFAs.
 
 #### replaceEmptyEdges
 ```haskell
 replaceEmptyEdges :: (Ord a) => NFA a -> NFA a
 ```
-converts an NFA into an NFA that recognizes the same language, but does not
-contain any edges labeled with the empty word.
+converts an NFA into an NFA that recognizes the same language, but does not contain any edges labeled with the empty word.
 
 #### replaceWordEdges
 ```haskell
 replaceWordEdges :: (Ord a) => NFA a -> NFA Int
 ```
-Replaces all the edges of an NFA that are labeled with words of length > 1, 
-in a way, that produces an equivalent NFA, that does not have such edges.
+Replaces all the edges of an NFA that are labeled with words of length > 1, in a way, that produces an equivalent NFA, that does not have such edges.
 
-Before the rest of the calculation, we convert the NFA into an NFA
-with Int states, as this makes it easier to handle the creation of new states,
-which is necessary for this function.
-
-#### replaceSetValueEdges
+#### replaceSetValuedEdges
 ```haskell
-replaceSetValueEdges :: (Ord a) => NFA a -> NFA a
+replaceSetValuedEdges :: (Ord a) => NFA a -> NFA a
 ```
-Makes an equivalent NFA, that is described only by edges pointing to singleton sets,
-not to sets of size > 1.
+Makes an equivalent NFA, that is described only by edges pointing to singleton sets, not to sets of size > 1.
 
-#### pruneUnreachable
+#### removeStates
 ```haskell
-pruneUnreachable :: (Ord a) => NFA a -> NFA a
+removeStates :: (Ord a) => NFA a -> States a -> NFA a
 ```
-Prunes away all the states and edges from an NFA, that can never be reached
+Removes all given states from an NFA, as well as the associated Edges.
+
+#### simplify
+```haskell
+simplify :: (Ord a) => NFA a -> NFA a
+```
+Removes all states from an NFA, that can never be reached or from where no acceptance state can be reached, as well as the associated Edges. The resulting NFA recognizes the same language as the input NFA.
 
 ### Analysing Recognized Languages
 
