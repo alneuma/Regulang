@@ -8,44 +8,142 @@ import qualified Data.Bifunctor as BF (first, second)
 import qualified Text.Printf    as P  (printf)
 import qualified Data.Set       as S  (Set, singleton, findIndex, size, toList, fromList, isSubsetOf, insert, cartesianProduct, empty, map, filter, null, member, union, intersection, difference, unions, disjoint, toAscList, foldl')
 
-type SymbolRL         = Char
-type WordRL           = [SymbolRL]
-emptyWord             = [] :: WordRL
-type AlphabetRL       = S.Set SymbolRL
+-------------------
+-- type synonyms --
+-------------------
+
+type SymbolRL           = Char
+type WordRL             = [SymbolRL]
+emptyWord               = [] :: WordRL
+type AlphabetRL         = S.Set SymbolRL
+type LanguageRL         = [WordRL]
 -- I chose to implement languages as lists instead of sets, as they will often be infinite
 -- and sets from Data.Set should only have finite size
-type LanguageRL       = [WordRL]
-type TransitionRule a = ((a,WordRL),S.Set a)
-type Delta a          = S.Set (TransitionRule a)
-type States a         = S.Set a
+type TransitionRule a b = ((a,b),S.Set a)
+type Delta a b          = S.Set (TransitionRule a b)
+type States a           = S.Set a
 
--- nondeterministic finita automation
-data NFA a = NFA {states :: States a, 
-                  sigma  :: AlphabetRL,
-                  delta  :: Delta a,
-                  start  :: States a,
-                  finish :: States a}
-                  deriving Eq
+-----------------
+-- typeclasses --
+-----------------
+
+-- EdgeLabel is the class of Types that can serve as labels for
+-- the edges of an NFA
+--
+-- Types of class EdgeLabel are
+-- SymbolRL
+-- WordRL
+-- RegEx
+--
+class EdgeLabel a where
+  getAlphabet  :: a -> AlphabetRL
+  isEmptyLabel :: a -> Bool
+
+instance EdgeLabel SymbolRL where
+  -- getAlphabet :: a -> AlphabetRL
+  getAlphabet = S.singleton
+  -- isEmptyLabel :: a -> Bool
+  isEmptyLabel _ = False
+  
+instance EdgeLabel WordRL where
+  -- getAlphabet :: a -> AlphabetRL
+  getAlphabet = S.fromList
+  -- isEmptyLabel :: a -> Bool
+  isEmptyLabel = (==) emptyWord
+
+-- RegEx and Grammar is not implemented yet
+class RegularLanguage a where
+  toList    :: a -> LanguageRL
+  toNFA     :: a -> NFA Int WordRL
+  -- toRegEx   :: a -> RegEx
+  -- toGrammar :: a -> Grammar
+
+----------------------
+-- dataconstructors --
+----------------------
 
 -- regular expressions
+-- needs yet to be made an instance of RegularLanguage
 data RegEx = RE SymbolRL
-           | Empty
-           | Epsilon
-           | Concat RegEx RegEx
+           | EmptySet
+           | EmptyWord
            | Kleene RegEx
-           | Union RegEx
+           | Concat RegEx RegEx
+           | Union RegEx RegEx
+           deriving Show
 
--- grammar
+instance Eq RegEx where
+  r == r' = show r == show r'
+
+instance Ord RegEx where
+  r <= r' = show r <= show r'
+
+instance EdgeLabel RegEx where
+  -- getAlphabet :: a -> AlphabetRL
+  getAlphabet (RE s)        = S.singleton s
+  getAlphabet EmptySet      = S.empty
+  getAlphabet EmptyWord     = S.empty
+  getAlphabet (Kleene r)    = getAlphabet r
+  getAlphabet (Concat r r') = S.union (getAlphabet r) (getAlphabet r')
+  getAlphabet (Union  r r') = S.union (getAlphabet r) (getAlphabet r')
+  -- isEmptyLabel :: a -> Bool
+  isEmptyLabel (RE _)        = False
+  isEmptyLabel EmptySet      = False
+  isEmptyLabel EmptyWord     = True
+  isEmptyLabel (Kleene r)    = isEmptyLabel r || EmptySet == r
+  isEmptyLabel (Concat r r') = isEmptyLabel r && isEmptyLabel r'
+  isEmptyLabel (Union  r r') = isEmptyLabel r && isEmptyLabel r'
+
+--instance RegularLanguage RegEx where
+
+-- grammars
+-- besides the dataconstructor nothing implemented yet
 data Grammar = G {variables   :: AlphabetRL,
                   terminals   :: AlphabetRL,
                   rules       :: S.Set (WordRL,WordRL),
-                  startSymbol :: SymbolRL}
+                  startG      :: SymbolRL}
 
-class RegularLanguage a where
-  toList      :: a -> LanguageRL
-  toNFA       :: a -> NFA Int
-  toRegEx     :: a -> RegEx
-  toGrammar   :: a -> Grammar
+-- nondeterministic finite automations
+--
+-- a is the type that is used to label the states of the NFA
+-- Usually we want (Ord a).
+-- b is the type that is used to label edges of the NFA.
+-- Usually we want (EdgeLabel b).
+data NFA a b = NFA {states :: States a,
+                    sigma  :: AlphabetRL,
+                    delta  :: Delta a b,
+                    start  :: States a,
+                    finish :: States a}
+                    deriving Eq
+
+  
+-- Only implemented for NFA a WordRL yet, because the
+-- accepts function only works with this type yet.
+-- Will be fixed in the future.
+instance (Ord a) => RegularLanguage (NFA a WordRL) where
+  -- toList :: a -> LanguageRL
+  toList nfa = filter ((== Just True) . accepts nfa) (kleeneStar $ sigma nfa)
+  toNFA = toIntNFA 0
+
+instance (Show a, Show b) => Show (NFA a b) where
+    -- show :: (Show a) => NFA a -> String
+    show nfa = "States:\t" ++ showSet   (states nfa) ++ "\n" ++
+               "Sigma:\t"  ++ showSet   (sigma  nfa) ++ "\n" ++
+               "Delta:\t"  ++ showDelta (delta  nfa) ++
+               "Start:\t"  ++ showSet   (start  nfa) ++ "\n" ++
+               "Finish:\t" ++ showSet   (finish nfa)
+      where
+        showEdge ((q,s),qs) = "(" ++ show q ++ ", " ++ show s ++ ")\t-> " ++ showSet qs ++ "\n"
+        showDelta delta     = showEdge (head elementsDelta) ++ concatMap (("\t" ++) . showEdge) (tail elementsDelta)
+          where
+            elementsDelta = S.toAscList delta
+
+showSet :: (Show a) => S.Set a -> String
+showSet set
+  | S.null set = "{}"
+  | otherwise  = "{" ++ show (head elements) ++ concatMap (("," ++) . show) (tail elements) ++ "}"
+  where
+    elements = S.toAscList set
 
 ------------------------------------------------
 -- functions for creating and validating NFAs --
@@ -56,7 +154,7 @@ class RegularLanguage a where
 -- In the type signature I write [SymbolRL] instead of WordRL, because the argument is
 -- not to be understood as a word, but as a list of symbols, that will be translated into a
 -- an alphabet i.e. a set of symbols.
-makeNFA :: (Ord a) => [a] -> [SymbolRL] -> [((a,WordRL),[a])] -> [a] -> [a] -> Maybe (NFA a)
+makeNFA :: (Ord a, Ord b, EdgeLabel b) => [a] -> [SymbolRL] -> [((a,b),[a])] -> [a] -> [a] -> Maybe (NFA a b)
 makeNFA states sigma delta start finish
   | validNFA newNFA = Just newNFA
   | otherwise       = Nothing
@@ -78,7 +176,7 @@ makeNFA states sigma delta start finish
 -- Otherwise returns True.
 --
 -- Needs general rewrite also to handle ε-lableded arrows
-validNFA :: (Ord a) => NFA a -> Bool
+validNFA :: (Ord a, EdgeLabel b) => NFA a b -> Bool
 validNFA inputFA = True
 --                    S.isSubsetOf (start  inputFA) (states inputFA) &&
 --                    S.isSubsetOf (finish inputFA) (states inputFA) &&
@@ -88,10 +186,10 @@ validNFA inputFA = True
 --     deltaLeft  = S.map ((\(arg,[val]) -> (arg,val)) . fst) (delta inputFA)
 --     deltaRight = S.map snd (delta inputFA)
 
-getTrimStates :: (Ord a) => NFA a -> States a
+getTrimStates :: (Ord a) => NFA a b -> States a
 getTrimStates nfa = S.intersection (getReachableStates nfa) (getCoReachableStates nfa)
 
-getCoReachableStates :: (Ord a) => NFA a -> States a
+getCoReachableStates :: (Ord a) => NFA a b -> States a
 getCoReachableStates nfa = extendStatesByRule nfa followEdgesBackwards $ finish nfa
   where
     followEdgesBackwards states = S.difference newStates states
@@ -100,7 +198,7 @@ getCoReachableStates nfa = extendStatesByRule nfa followEdgesBackwards $ finish 
                   $ S.filter (not . S.null . (`S.intersection` states) . snd)
                   $ delta nfa
 
-getReachableStates :: (Ord a) => NFA a -> States a
+getReachableStates :: (Ord a) => NFA a b -> States a
 getReachableStates nfa = extendStatesByRule nfa followEdges $ start nfa
   where
     followEdges states = S.difference newStates states
@@ -120,7 +218,7 @@ getReachableStates nfa = extendStatesByRule nfa followEdges $ start nfa
 -- often could be of Ord-type values.
 -- It also can be used to homogenise the type of different NFAs, which might be necessary for a number
 -- of operations.
-toIntNFA :: (Ord a) => Int -> NFA a -> NFA Int
+toIntNFA :: (Ord a, Ord b) => Int -> NFA a b -> NFA Int b
 toIntNFA smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFinish
   where
     newStates = S.fromList $ zipWith const [smallest..] $ S.toAscList $ states nfa
@@ -136,7 +234,7 @@ toIntNFA smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFinish
 -- starting by converting both NFAs to NFA Int.
 -- This would have led to much more complicated code, as I could not just have used the union operation
 -- to merge the two NFAs.
-union :: (Ord a, Ord b) => NFA a -> NFA b -> NFA Int
+union :: (Ord a, Ord b, Ord c, EdgeLabel c) => NFA a c -> NFA b c -> NFA Int c
 union nfa nfb = NFA newStates newSigma newDelta newStart newFinish
   where
     newStates = S.union (states nfaInt) (states nfbInt)
@@ -152,12 +250,12 @@ union nfa nfb = NFA newStates newSigma newDelta newStart newFinish
 -- converts an NFA into an NFA that recognizes the same language, but does not
 -- contain any edges labeled with the empty word.
 --
-replaceEmptyEdges :: (Ord a) => NFA a -> NFA a
+replaceEmptyEdges :: (Ord a, Ord b, EdgeLabel b) => NFA a b -> NFA a b
 replaceEmptyEdges nfa = nfa {delta = newDelta, start = newStart}
   where
     newStart   = processEmptyEdges (delta nfa) (start nfa)
     newDelta   = go (delta nfa) (emptyEdges $ delta nfa)
-    emptyEdges = S.filter (\t -> snd (fst t) == emptyWord)
+    emptyEdges = S.filter (isEmptyLabel . snd . fst)
     go delt eps
       | S.null eps = delt
       | otherwise  = go tmpDelta $ emptyEdges tmpDelta
@@ -176,7 +274,7 @@ replaceEmptyEdges nfa = nfa {delta = newDelta, start = newStart}
 -- with Int states, as this makes it easier to handle the creation of new states,
 -- which is necessary for this function.
 --
-replaceWordEdges :: (Ord a) => NFA a -> NFA Int
+replaceWordEdges :: (Ord a) => NFA a WordRL -> NFA Int WordRL
 replaceWordEdges nfa = tmpNFA {states = newStates, delta = newDelta}
   where
     tmpNFA               = toIntNFA 0 nfa
@@ -198,7 +296,7 @@ replaceWordEdges nfa = tmpNFA {states = newStates, delta = newDelta}
 -- Makes an equivalent NFA, that is described only by edges pointing to singleton sets,
 -- not to sets of size > 1.
 --
-replaceSetValuedEdges :: (Ord a) => NFA a -> NFA a
+replaceSetValuedEdges :: (Ord a, Ord b) => NFA a b -> NFA a b
 replaceSetValuedEdges nfa = nfa {delta = newDelta}
   where
     wordDelta  = S.filter ((>1) . S.size . snd) $ delta nfa
@@ -206,7 +304,7 @@ replaceSetValuedEdges nfa = nfa {delta = newDelta}
     split1 ((q,w),qs) = S.map (\r -> ((q,w),S.singleton r)) qs
     newDelta          = S.union addedDelta $ S.difference (delta nfa) wordDelta
 
-removeStates :: (Ord a) => NFA a -> States a -> NFA a
+removeStates :: (Ord a, Ord b) => NFA a b -> States a -> NFA a b
 removeStates nfa statesToRemove = nfa {states = newStates,
                                        delta  = newDelta,
                                        start  = newStart,
@@ -220,7 +318,7 @@ removeStates nfa statesToRemove = nfa {states = newStates,
               $ S.filter ((`S.member` newStates) . fst . fst)
               $ delta nfa
 
-simplify :: (Ord a) => NFA a -> NFA a
+simplify :: (Ord a, Ord b) => NFA a b -> NFA a b
 simplify nfa = removeStates nfa (S.difference (states nfa) $ getTrimStates nfa)
 
 -- private function, used for a number of other functions
@@ -238,7 +336,7 @@ simplify nfa = removeStates nfa (S.difference (states nfa) $ getTrimStates nfa)
 --   it was used once as element of the input state for the rule.
 --   Make sure, that the rule is written in a way that what states are newly derived from it
 --   does only depend on each state of the input set individually.
-extendStatesByRule :: (Ord a) => NFA a -> (States a -> States a) -> States a -> States a
+extendStatesByRule :: (Ord a) => NFA a b -> (States a -> States a) -> States a -> States a
 extendStatesByRule nfa rule = S.unions . takeWhile (not . S.null) . applyRepeatedly rule
   where
     applyRepeatedly f x = x : applyRepeatedly f (f x)
@@ -274,7 +372,7 @@ extendStatesByRule nfa rule = S.unions . takeWhile (not . S.null) . applyRepeate
 -- set of transition rules (delta) and the currently examined symbol of the input word, takes the
 -- set of currently reached states and a set of only partly resolved arrows (pending) as input and
 -- returns a tuple of the new reached states and the new partly resolved arrows.
-accepts :: (Ord a) => NFA a -> WordRL -> Maybe Bool
+accepts :: (Ord a) => NFA a WordRL -> WordRL -> Maybe Bool
 accepts nfa word
   | S.isSubsetOf (S.fromList word) (sigma nfa) = Just $ go (start nfa) S.empty word
   | otherwise                                  = Nothing
@@ -284,7 +382,7 @@ accepts nfa word
       where
         (newStates,newPending) = nextStatesPending (delta nfa) s states pending
 
-nextStatesPending :: (Ord a) => Delta a -> SymbolRL -> States a -> S.Set (WordRL,S.Set a) -> (States a, S.Set (WordRL,S.Set a))
+nextStatesPending :: (Ord a) => Delta a WordRL -> SymbolRL -> States a -> S.Set (WordRL,S.Set a) -> (States a, S.Set (WordRL,S.Set a))
 nextStatesPending delta symbol states pending = newStatesPending tmpPending
   where
     newStatesPending = go S.empty S.empty . S.toList
@@ -301,10 +399,10 @@ nextStatesPending delta symbol states pending = newStatesPending tmpPending
     tmpStates = processEmptyEdges delta states
     reducePending = S.map (BF.first tail) . S.filter ((==symbol) . head . fst)
 
-processEmptyEdges :: (Ord a) => Delta a -> States a -> States a
+processEmptyEdges :: (Ord a, EdgeLabel b) => Delta a b -> States a -> States a
 processEmptyEdges delta = go
   where
-    deltaEpsilonEdges = S.filter ((==emptyWord) . snd . fst) delta
+    deltaEpsilonEdges = S.filter (isEmptyLabel . snd . fst) delta
     go stateSetOld
       | S.null stateSetNew = stateSetOld
       | otherwise          = go $ S.union stateSetOld stateSetNew
@@ -340,37 +438,14 @@ kleenePlus = tail . kleeneStar
 -- testing and comparing NFAs --
 --------------------------------
 
-acceptSameWord :: (Ord a) => NFA a -> NFA a -> WordRL -> Bool
+acceptSameWord :: (Ord a) => NFA a WordRL -> NFA a WordRL -> WordRL -> Bool
 acceptSameWord nfa nfb word = accepts nfa word == accepts nfb word
 
-recognizeSameLanguage :: (Ord a) => Int -> NFA a -> NFA a -> LanguageRL -> Bool
+recognizeSameLanguage :: (Ord a) => Int -> NFA a WordRL -> NFA a WordRL -> LanguageRL -> Bool
 recognizeSameLanguage n nfa nfb = all (acceptSameWord nfa nfb) . take n
 
-recognizeLanguageVector :: (Ord a) => Int -> NFA a -> LanguageRL -> [Maybe Bool]
+recognizeLanguageVector :: (Ord a) => Int -> NFA a WordRL -> LanguageRL -> [Maybe Bool]
 recognizeLanguageVector n nfa = take n . map (accepts nfa)
-
----------------------
--- displaying NFAs --
----------------------
-
-instance (Show a) => Show (NFA a) where
-    -- show :: (Show a) => NFA a -> String
-    show nfa = "States:\t" ++ showSet   (states nfa) ++ "\n" ++
-               "Sigma:\t"  ++ showSet   (sigma  nfa) ++ "\n" ++
-               "Delta:\t"  ++ showDelta (delta  nfa) ++
-               "Start:\t"  ++ showSet   (start  nfa) ++ "\n" ++
-               "Finish:\t" ++ showSet   (finish nfa)
-      where
-        showDelta delta = showEdge (head elementsDelta) ++ concatMap (("\t" ++) . showEdge) (tail elementsDelta)
-          where elementsDelta = S.toAscList delta
-        showEdge ((q,s),qs) = "(" ++ show q ++ ", " ++ show s ++ ")\t-> " ++ showSet qs ++ "\n"
-
-showSet :: (Show a) => S.Set a -> String
-showSet set
-  | S.null set = "{}"
-  | otherwise  = "{" ++ show (head elements) ++ concatMap (("," ++) . show) (tail elements) ++ "}"
-  where
-    elements = S.toAscList set
 
 ------------------------------
 -- example and testing NFAs --
