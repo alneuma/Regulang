@@ -1,16 +1,19 @@
 -- Copyright: (c) 2023, Alrik Neumann
 -- GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-module NFA (NFA,makeNFA,accepts,getReachableStates,getCoReachableStates,getTrimStates,removeStates,simplify,toIntNFA,union,replaceEmptyEdges,replaceWordEdges,replaceSetValuedEdges,kleeneNumber,kleeneStar,kleenePlus) where
+module NFA (NFA,makeNFA,acceptsNFA,getReachableStates,getCoReachableStates,getTrimStates,removeStates,simplify,toIntNFA,union,replaceEmptyEdges,replaceWordEdges,replaceSetValuedEdges,kleeneNumber,kleeneStar,kleenePlus) where
 
-import qualified Data.Maybe     as M  (fromJust) 
-import qualified Data.Bifunctor as BF (first, second)
-import qualified Text.Printf    as P  (printf)
-import qualified Data.Set       as S  (Set, singleton, findIndex, size, toList, fromList, isSubsetOf, insert, cartesianProduct, empty, map, filter, null, member, union, intersection, difference, unions, disjoint, toAscList, foldl')
+import qualified Data.Maybe     as M  (fromJust,isNothing) 
+import qualified Data.Bifunctor as BF (first,second)
+import qualified Data.Set       as S
 
--------------------
--- type synonyms --
--------------------
+-- Monad instance for S.Set --
+
+---------------------------------------------
+---------------------------------------------
+---- TYPE SYNONYMS AND DATA CONSTRUCTORS ----
+---------------------------------------------
+---------------------------------------------
 
 type SymbolRL           = Char
 type WordRL             = [SymbolRL]
@@ -23,47 +26,21 @@ type TransitionRule a b = ((a,b),S.Set a)
 type Delta a b          = S.Set (TransitionRule a b)
 type States a           = S.Set a
 
------------------
--- typeclasses --
------------------
-
--- EdgeLabel is the class of Types that can serve as labels for
--- the edges of an NFA
+-- NFAs
+-- (nondeterministic finite automations)
 --
--- Types of class EdgeLabel are
--- SymbolRL
--- WordRL
--- RegEx
---
-class EdgeLabel a where
-  getAlphabet  :: a -> AlphabetRL
-  isEmptyLabel :: a -> Bool
-
-instance EdgeLabel SymbolRL where
-  -- getAlphabet :: a -> AlphabetRL
-  getAlphabet = S.singleton
-  -- isEmptyLabel :: a -> Bool
-  isEmptyLabel _ = False
-  
-instance EdgeLabel WordRL where
-  -- getAlphabet :: a -> AlphabetRL
-  getAlphabet = S.fromList
-  -- isEmptyLabel :: a -> Bool
-  isEmptyLabel = (==) emptyWord
-
--- RegEx and Grammar is not implemented yet
-class RegularLanguage a where
-  toList    :: a -> LanguageRL
-  toNFA     :: a -> NFA Int WordRL
-  -- toRegEx   :: a -> RegEx
-  -- toGrammar :: a -> Grammar
-
-----------------------
--- dataconstructors --
-----------------------
+-- a is the type that is used to label the states of the NFA
+-- Usually we want (Ord a).
+-- b is the type that is used to label edges of the NFA.
+-- Usually we want (Ord b, ELabel b).
+data NFA a b = NFA {states :: States a,
+                    sigma  :: AlphabetRL,
+                    delta  :: Delta a b,
+                    start  :: States a,
+                    finish :: States a}
+                    deriving (Show, Eq)
 
 -- regular expressions
--- needs yet to be made an instance of RegularLanguage
 data RegEx = RE SymbolRL
            | EmptySet
            | EmptyWord
@@ -71,30 +48,10 @@ data RegEx = RE SymbolRL
            | Concat RegEx RegEx
            | Union RegEx RegEx
            deriving Show
-
 instance Eq RegEx where
   r == r' = show r == show r'
-
 instance Ord RegEx where
   r <= r' = show r <= show r'
-
-instance EdgeLabel RegEx where
-  -- getAlphabet :: a -> AlphabetRL
-  getAlphabet (RE s)        = S.singleton s
-  getAlphabet EmptySet      = S.empty
-  getAlphabet EmptyWord     = S.empty
-  getAlphabet (Kleene r)    = getAlphabet r
-  getAlphabet (Concat r r') = S.union (getAlphabet r) (getAlphabet r')
-  getAlphabet (Union  r r') = S.union (getAlphabet r) (getAlphabet r')
-  -- isEmptyLabel :: a -> Bool
-  isEmptyLabel (RE _)        = False
-  isEmptyLabel EmptySet      = False
-  isEmptyLabel EmptyWord     = True
-  isEmptyLabel (Kleene r)    = isEmptyLabel r || EmptySet == r
-  isEmptyLabel (Concat r r') = isEmptyLabel r && isEmptyLabel r'
-  isEmptyLabel (Union  r r') = isEmptyLabel r && isEmptyLabel r'
-
---instance RegularLanguage RegEx where
 
 -- grammars
 -- besides the dataconstructor nothing implemented yet
@@ -102,48 +59,211 @@ data Grammar = G {variables   :: AlphabetRL,
                   terminals   :: AlphabetRL,
                   rules       :: S.Set (WordRL,WordRL),
                   startG      :: SymbolRL}
+                  deriving (Show, Eq)
 
--- nondeterministic finite automations
---
--- a is the type that is used to label the states of the NFA
--- Usually we want (Ord a).
--- b is the type that is used to label edges of the NFA.
--- Usually we want (EdgeLabel b).
-data NFA a b = NFA {states :: States a,
-                    sigma  :: AlphabetRL,
-                    delta  :: Delta a b,
-                    start  :: States a,
-                    finish :: States a}
-                    deriving Eq
+---------------------
+---------------------
+---- TYPECLASSES ----
+---------------------
+---------------------
 
+------------
+-- Elabel --
+------------
+
+-- Labels for Edges of NFAs
+-- SymbolRL
+-- WordRL
+-- RegEx
+
+class ELabel a where
+  containedPart      :: a -> WordRL -> Maybe (WordRL,WordRL)
+  -- Splits a word into the part at a beginnin which is contained in a label
+  -- and the rest.
+  -- Returns Nothing if the label does not accept the word.
+  leftAfterTraversal :: a -> WordRL -> Maybe (S.Set WordRL)
+  -- Returns Nothing if edge can not be legally traversed with this
+  -- word otherwise returns Just the set of all possible remaining
+  -- words after traversal.
+  -- Except in the case of a RegEx ELabel, this will always be
+  -- a singleton set.
+  isSingletonLabel   :: a -> Bool
+  -- True if the label only contains a single symbol
+  isEmptyLabel       :: a -> Bool
+  -- True if the label contains the empty word
+  getAlphabet        :: a -> AlphabetRL
+  -- Gets the alphabet useb by a label
+  label2standardNFA  :: a -> NFA Int WordRL
+  -- makes and NFA, that accepts words
+  -- that are equal to the label (SymbolRL, WordRL) or
+  -- are "in" the label (RegEx)
+
+instance ELabel SymbolRL where
+  -- containedPart :: SymbolRL -> WordRL -> Maybe (WordRL,WordRL)
+  containedPart _ [] = Nothing
+  containedPart label (x:xs)
+    | label == x = Just ([x],xs)
+    | otherwise  = Nothing
+  -- leftAfterTraversal :: SymbolRL -> WordRL -> Maybe (S.Set WordRL)
+  leftAfterTraversal _ [] = Nothing
+  leftAfterTraversal label (x:xs)
+    | label == x = Just $ S.singleton xs
+    | otherwise  = Nothing
+  -- isSingletonLabel :: SymbolRL -> Bool
+  isSingletonLabel _ = True
+  -- isEmptyLabel :: SymbolRL -> Bool
+  isEmptyLabel _ = False
+  -- getAlphabet :: SymbolRL -> AlphabetRL
+  getAlphabet    = S.singleton
+  -- label2standardNFA :: SymbolRL -> NFA Int WordRL
+  label2standardNFA symbol = makeNFA [0,1] [symbol] [((0,[symbol]),[1])] [0] [1]
   
--- Only implemented for NFA a WordRL yet, because the
--- accepts function only works with this type yet.
--- Will be fixed in the future.
-instance (Ord a) => RegularLanguage (NFA a WordRL) where
-  -- toList :: a -> LanguageRL
-  toList nfa = filter ((== Just True) . accepts nfa) (kleeneStar $ sigma nfa)
-  toNFA = toIntNFA 0
+instance ELabel WordRL where
+  -- containedPart :: WordRL -> WordRL -> Maybe (WordRL,WordRL)
+  containedPart label word
+    | lengthMatching == lengthLabel = Just (label,drop lengthLabel word)
+    | otherwise                     = Nothing
+    where
+      lengthLabel    = lengthLabel
+      lengthMatching = length
+                     $ takeWhile (== True)
+                     $ zipWith (==) label word
+  -- leftAfterTraversal :: WordRL -> WordRL -> Maybe (S.Set WordRL)
+  leftAfterTraversal label word
+    | M.isNothing parts = Nothing
+    | otherwise         = Just $ S.singleton $ snd $ M.fromJust parts
+    where
+      parts = containedPart label word
+  -- isSingletonLabel :: WordRL -> Bool
+  isSingletonLabel word = length word == 1
+  -- isEmptyLabel :: WordRL -> Bool
+  isEmptyLabel = (==) emptyWord
+  -- getAlphabet :: WordRL -> AlphabetRL
+  getAlphabet = S.fromList
+  -- label2standardNFA :: WordRL -> NFA Int WordRL
+  label2standardNFA word = makeNFA [0,1] word [((0,word),[1])] [0] [1]
 
-instance (Show a, Show b) => Show (NFA a b) where
-    -- show :: (Show a) => NFA a -> String
-    show nfa = "States:\t" ++ showSet   (states nfa) ++ "\n" ++
-               "Sigma:\t"  ++ showSet   (sigma  nfa) ++ "\n" ++
-               "Delta:\t"  ++ showDelta (delta  nfa) ++
-               "Start:\t"  ++ showSet   (start  nfa) ++ "\n" ++
-               "Finish:\t" ++ showSet   (finish nfa)
+instance ELabel RegEx where
+  -- containedPart :: RegEx -> WordRL -> Bool
+  -- containedPart = undefined
+  -- leftAfterTraversal :: RegEx -> WordRL -> Maybe (S.Set WordRL)
+  -- leftAfterTraversal = undefined
+  -- isSingletonLabel :: RegEx -> Bool
+  isSingletonLabel (RE _) = True
+  isSingletonLabel _      = False
+  -- isEmptyLabel :: RegEx -> Bool
+  isEmptyLabel (RE _)        = False
+  isEmptyLabel EmptySet      = False
+  isEmptyLabel EmptyWord     = True
+  isEmptyLabel (Kleene r)    = True
+  isEmptyLabel (Concat r r') = isEmptyLabel r && isEmptyLabel r'
+  isEmptyLabel (Union  r r') = isEmptyLabel r || isEmptyLabel r'
+  -- getAlphabet :: RegEx -> AlphabetRL
+  getAlphabet (RE s)        = S.singleton s
+  getAlphabet EmptySet      = S.empty
+  getAlphabet EmptyWord     = S.empty
+  getAlphabet (Kleene r)    = getAlphabet r
+  getAlphabet (Concat r r') = S.union (getAlphabet r) (getAlphabet r')
+  getAlphabet (Union  r r') = S.union (getAlphabet r) (getAlphabet r')
+  -- label2standardNFA :: RegEx -> NFA Int WordRL
+  -- label2standardNFA _ = undefined
+
+------------
+-- ShowRL --
+------------
+
+-- displaying different types in nice readable output
+
+class ShowRL a where
+  showRL :: a -> String
+
+instance ShowRL SymbolRL where
+  showRL = show
+
+instance ShowRL WordRL where
+  showRL = show
+
+instance ShowRL RegEx where
+-- "{}" for empty-set-symbol
+-- "''" for empty-word-symbol (epsilon)
+-- "|"  for set-union-symbol
+-- everything else should be as expected
+  showRL (RE x)                                = [x]
+  showRL EmptySet                              = "{}"
+  showRL EmptyWord                             = "''"
+  showRL (Kleene (RE x))                       = [x,'*']
+  showRL (Kleene r)                            = "(" ++ showRL r ++ ")*"
+  showRL (Concat r@(Union _ _) r'@(Union _ _)) = "(" ++ showRL r ++ ")(" ++ showRL r' ++ ")"
+  showRL (Concat r@(Union _ _) r')             = "(" ++ showRL r ++ ")" ++ showRL r'
+  showRL (Concat r             r'@(Union _ _)) = showRL r ++ "(" ++ showRL r' ++ ")"
+  showRL (Concat r r')                         = showRL r ++ showRL r'
+  showRL (Union  r r')                         = showRL r ++ "|" ++ showRL r'
+
+instance (Show a) => ShowRL (S.Set a) where
+  showRL set
+    | S.null set = "{}"
+    | otherwise  = "{" ++ show (head elements) ++ concatMap (("," ++) . show) (tail elements) ++ "}"
+       where elements = S.toAscList set
+
+instance (Show a, ShowRL b) => ShowRL (TransitionRule a b) where
+  showRL ((q,s),qs) = "(" ++ show q ++ ", " ++ showRL s ++ ")\t-> " ++ showRL qs ++ "\n"
+
+instance (Show a, ShowRL b) => ShowRL (NFA a b) where
+    showRL nfa = "States:\t" ++ showRL    (states nfa) ++ "\n" ++
+                 "Sigma:\t"  ++ showRL    (sigma  nfa) ++ "\n" ++
+                 "Delta:\t"  ++ deltaString            ++
+                 "Start:\t"  ++ showRL    (start  nfa) ++ "\n" ++
+                 "Finish:\t" ++ showRL    (finish nfa)
       where
-        showEdge ((q,s),qs) = "(" ++ show q ++ ", " ++ show s ++ ")\t-> " ++ showSet qs ++ "\n"
-        showDelta delta     = showEdge (head elementsDelta) ++ concatMap (("\t" ++) . showEdge) (tail elementsDelta)
-          where
-            elementsDelta = S.toAscList delta
+        deltaString = showRL (head elementsDelta) ++ concatMap (("\t" ++) . showRL) (tail elementsDelta)
+        elementsDelta = S.toAscList $ delta nfa
 
-showSet :: (Show a) => S.Set a -> String
-showSet set
-  | S.null set = "{}"
-  | otherwise  = "{" ++ show (head elements) ++ concatMap (("," ++) . show) (tail elements) ++ "}"
-  where
-    elements = S.toAscList set
+-------------
+-- RegLang --
+-------------
+
+-- class of types that can represent regular languages
+
+class RegLang a where
+  accepts       :: a -> WordRL -> Maybe Bool
+  toList        :: a -> LanguageRL
+  toStandardNFA :: a -> NFA Int WordRL
+  -- toRegEx   :: a -> RegEx
+  -- toGrammar :: a -> Grammar
+  -- addWord   :: a -> WordRL -> a
+
+-- Only implemented for NFA a WordRL yet, because the
+-- acceptsNFA function only works with this type yet.
+-- Will be fixed in the future.
+instance (Ord a) => RegLang (NFA a WordRL) where
+  -- toList :: (Ord a) => NFA a WordRL -> LanguageRL
+  toList nfa = filter ((== Just True) . accepts nfa) (kleeneStar $ sigma nfa)
+  -- toStandardNFA :: (Ord a) => NFA a WordRL -> NFA Int WordRL
+  toStandardNFA = toIntNFA 0
+  -- toList :: (Ord a) => NFA a WordRL -> WordRL -> Maybe Bool
+  accepts = acceptsNFA
+
+instance RegLang RegEx where
+  -- accepts       :: RegEx -> WordRL -> Maybe Bool
+  -- toList        :: RegEx -> LanguageRL
+  -- toStandardNFA :: RegEx -> NFA Int WordRL
+  -- toRegEx       :: RegEx -> RegEx
+  -- toGrammar     :: RegEx -> Grammar
+  -- addWord       :: RegEx -> WordRL -> RegEx
+
+instance RegLang Grammar where
+  -- accepts       :: Grammar -> WordRL -> Maybe Bool
+  -- toList        :: Grammar -> LanguageRL
+  -- toStandardNFA :: Grammar -> NFA Int WordRL
+  -- toRegEx       :: Grammar -> RegEx
+  -- toGrammar     :: Grammar -> Grammar
+  -- addWord       :: Grammar -> WordRL -> Grammar
+
+-------------
+-------------
+---- NFA ----
+-------------
+-------------
 
 ------------------------------------------------
 -- functions for creating and validating NFAs --
@@ -154,12 +274,9 @@ showSet set
 -- In the type signature I write [SymbolRL] instead of WordRL, because the argument is
 -- not to be understood as a word, but as a list of symbols, that will be translated into a
 -- an alphabet i.e. a set of symbols.
-makeNFA :: (Ord a, Ord b, EdgeLabel b) => [a] -> [SymbolRL] -> [((a,b),[a])] -> [a] -> [a] -> Maybe (NFA a b)
-makeNFA states sigma delta start finish
-  | validNFA newNFA = Just newNFA
-  | otherwise       = Nothing
+makeNFA :: (Ord a, Ord b, ELabel b) => [a] -> [SymbolRL] -> [((a,b),[a])] -> [a] -> [a] -> NFA a b
+makeNFA states sigma delta start finish = NFA newStates newSigma newDelta newStart newFinish
   where
-    newNFA = NFA newStates newSigma newDelta newStart newFinish
     newStates = S.fromList states
     newSigma  = S.fromList sigma
     newDelta  = S.fromList $ map (BF.second S.fromList) delta
@@ -176,7 +293,7 @@ makeNFA states sigma delta start finish
 -- Otherwise returns True.
 --
 -- Needs general rewrite also to handle ε-lableded arrows
-validNFA :: (Ord a, EdgeLabel b) => NFA a b -> Bool
+validNFA :: (Ord a, ELabel b) => NFA a b -> Bool
 validNFA inputFA = True
 --                    S.isSubsetOf (start  inputFA) (states inputFA) &&
 --                    S.isSubsetOf (finish inputFA) (states inputFA) &&
@@ -234,7 +351,7 @@ toIntNFA smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFinish
 -- starting by converting both NFAs to NFA Int.
 -- This would have led to much more complicated code, as I could not just have used the union operation
 -- to merge the two NFAs.
-union :: (Ord a, Ord b, Ord c, EdgeLabel c) => NFA a c -> NFA b c -> NFA Int c
+union :: (Ord a, Ord b, Ord c) => NFA a c -> NFA b c -> NFA Int c
 union nfa nfb = NFA newStates newSigma newDelta newStart newFinish
   where
     newStates = S.union (states nfaInt) (states nfbInt)
@@ -245,12 +362,15 @@ union nfa nfb = NFA newStates newSigma newDelta newStart newFinish
     nfaInt = toIntNFA 0 nfa
     nfbInt = toIntNFA (S.size $ states nfa) nfb
 
+insertNFAasEdge :: (Ord a, Ord b, ELabel b) => NFA a b -> a -> a -> NFA a b -> NFA Int b
+insertNFAasEdge nfa fromState toState nfb = undefined
+
 -- replaceEmptyEdges
 --
 -- converts an NFA into an NFA that recognizes the same language, but does not
 -- contain any edges labeled with the empty word.
 --
-replaceEmptyEdges :: (Ord a, Ord b, EdgeLabel b) => NFA a b -> NFA a b
+replaceEmptyEdges :: (Ord a, Ord b, ELabel b) => NFA a b -> NFA a b
 replaceEmptyEdges nfa = nfa {delta = newDelta, start = newStart}
   where
     newStart   = processEmptyEdges (delta nfa) (start nfa)
@@ -345,7 +465,7 @@ extendStatesByRule nfa rule = S.unions . takeWhile (not . S.null) . applyRepeate
 -- functions for checking if an NFA accepts a word --
 -----------------------------------------------------
 
--- accepts:
+-- acceptsNFA:
 -- Verify if a word is accepted by a given NFA
 --
 -- Returns Nothing if the word does contain symbols which are not in the alphabet of the NFA.
@@ -372,8 +492,8 @@ extendStatesByRule nfa rule = S.unions . takeWhile (not . S.null) . applyRepeate
 -- set of transition rules (delta) and the currently examined symbol of the input word, takes the
 -- set of currently reached states and a set of only partly resolved arrows (pending) as input and
 -- returns a tuple of the new reached states and the new partly resolved arrows.
-accepts :: (Ord a) => NFA a WordRL -> WordRL -> Maybe Bool
-accepts nfa word
+acceptsNFA :: (Ord a) => NFA a WordRL -> WordRL -> Maybe Bool
+acceptsNFA nfa word
   | S.isSubsetOf (S.fromList word) (sigma nfa) = Just $ go (start nfa) S.empty word
   | otherwise                                  = Nothing
   where
@@ -399,7 +519,7 @@ nextStatesPending delta symbol states pending = newStatesPending tmpPending
     tmpStates = processEmptyEdges delta states
     reducePending = S.map (BF.first tail) . S.filter ((==symbol) . head . fst)
 
-processEmptyEdges :: (Ord a, EdgeLabel b) => Delta a b -> States a -> States a
+processEmptyEdges :: (Ord a, ELabel b) => Delta a b -> States a -> States a
 processEmptyEdges delta = go
   where
     deltaEpsilonEdges = S.filter (isEmptyLabel . snd . fst) delta
@@ -439,13 +559,13 @@ kleenePlus = tail . kleeneStar
 --------------------------------
 
 acceptSameWord :: (Ord a) => NFA a WordRL -> NFA a WordRL -> WordRL -> Bool
-acceptSameWord nfa nfb word = accepts nfa word == accepts nfb word
+acceptSameWord nfa nfb word = acceptsNFA nfa word == acceptsNFA nfb word
 
 recognizeSameLanguage :: (Ord a) => Int -> NFA a WordRL -> NFA a WordRL -> LanguageRL -> Bool
 recognizeSameLanguage n nfa nfb = all (acceptSameWord nfa nfb) . take n
 
 recognizeLanguageVector :: (Ord a) => Int -> NFA a WordRL -> LanguageRL -> [Maybe Bool]
-recognizeLanguageVector n nfa = take n . map (accepts nfa)
+recognizeLanguageVector n nfa = take n . map (acceptsNFA nfa)
 
 ------------------------------
 -- example and testing NFAs --
@@ -453,17 +573,17 @@ recognizeLanguageVector n nfa = take n . map (accepts nfa)
 
 -- zeros2div3div
 -- an NFA that has an alphabet that consists only of '0' and accepts any number of '0's that is divisible by 2 or 3
-zeros2div3div = M.fromJust $ makeNFA [0,1,2,3,4,5] ['0'] [((0,emptyWord),[1,3]),((1,['0']),[2]),((2,['0']),[1]),((3,['0']),[4]),((4,['0']),[5]),((5,['0']),[3])] [0] [1,3]
+zeros2div3div = makeNFA [0,1,2,3,4,5] ['0'] [((0,emptyWord),[1,3]),((1,['0']),[2]),((2,['0']),[1]),((3,['0']),[4]),((4,['0']),[5]),((5,['0']),[3])] [0] [1,3]
 
 zeros2div3divInt = toIntNFA 0 zeros2div3div
 
 -- notZeros2div3div = complementNFA zeros2div3div
 
-even1s = M.fromJust $ makeNFA [0,1] ['0','1'] [((0,['0']),[0]),((1,['0']),[1]),((0,['1']),[1]),((1,['1']),[0])] [0] [0]
+even1s = makeNFA [0,1] ['0','1'] [((0,['0']),[0]),((1,['0']),[1]),((0,['1']),[1]),((1,['1']),[0])] [0] [0]
 
-endsWith1 = M.fromJust $ makeNFA [0,1] ['0','1'] [((0,['0']),[0]),((1,['0']),[0]),((0,['1']),[1]),((1,['1']),[1])] [0] [1]
+endsWith1 = makeNFA [0,1] ['0','1'] [((0,['0']),[0]),((1,['0']),[0]),((0,['1']),[1]),((1,['1']),[1])] [0] [1]
 
-abc = M.fromJust $ makeNFA [0,1] ['a','b','c'] [((0,"abc"),[1])] [0] [1]
+abc = makeNFA [0,1] ['a','b','c'] [((0,"abc"),[1])] [0] [1]
 
 abcNoWords = replaceWordEdges abc
 
@@ -479,4 +599,4 @@ zeros2div3divNoEps = replaceEmptyEdges zeros2div3div
 
 testReplaceEmptyEdges = recognizeSameLanguage 20 zeros2div3div zeros2div3divNoEps $ kleeneStar $ S.fromList ['0']
 
-testTrimNFA = M.fromJust $ makeNFA [0..10] "0" (zip (zip [1,2,3,5,7,8,9,10] $ repeat ['0']) [[2,5],[3],[4],[6],[8],[4],[10],[9]]) [1] [4]
+testTrimNFA = makeNFA [0..10] "0" (zip (zip [1,2,3,5,7,8,9,10] $ repeat ['0']) [[2,5],[3],[4],[6],[8],[4],[10],[9]]) [1] [4]

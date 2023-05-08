@@ -3,10 +3,10 @@ Copyright: (c) 2023, Alrik Neumann
 GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
 -->
 
-# Finite Automations and Regular Languages in Haskell
+# Regulang
 
 I am implementing this small module to help me study regular languages and the theory of computation.
-The goal is to implement different types of Representations of regular languages and make it possible to translate between them.
+The goal is to implement different types of representations of regular languages and make it possible to translate between them.
 So far I have implemented some functionality for [nondeterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs), enclosed in the `NFA.hs` file. [Deterministic finite automations](https://en.wikipedia.org/wiki/Deterministic_finite_automaton) (DFAs) are treated as a special case of NFAs, as they mathematically are.
 
 ### Creating and analysing NFAs
@@ -15,7 +15,7 @@ So far I have implemented some functionality for [nondeterministic finite automa
 ```haskell
 data NFA a b
 ```
-The should be `(Ord a, Ord b, EdgeLabel b)` as most functions depend on this.
+Should be `(Ord a, Ord b, ELabel b)`, as most functions depend on this.
 
 NFAs are allowed to have multiple start states.
 Different types for `b` will lead to different kinds of NFAs:
@@ -24,19 +24,19 @@ Different types for `b` will lead to different kinds of NFAs:
 NFAs that accept only single symbols as labels for their edges.
 
 `b` is of type `WordRL`:
-NFAs that accept whole Words as labels for their edges, including the empty word.
+NFAs that accept whole words as labels for their edges, including the empty word.
 
 `b` is of type `RegEx`:
 NFAs that accept regular expressions as labels for their edges.
 
-So far `SymbolRL`, `WordRL` and `RegEx` are the only instances of `EdgeLabel`
+So far `SymbolRL`, `WordRL` and `RegEx` are the only instances of `ELabel`
 
 #### makeNFA
 ```haskell
-makeNFA :: (Ord a, Ord b, EdgeLabel b) => [a] -> [SymbolRL] -> [((a,b),[a])] -> [a] -> [a] -> Maybe (NFA a b)
+makeNFA :: (Ord a, Ord b, ELabel b) => [a] -> [SymbolRL] -> [((a,b),[a])] -> [a] -> [a] -> NFA a b
 ```
 
-Make an NFA without the directly applying the data constructor, which would need to be supplied with `Set` type values from `Data.Set`.
+Make an NFA without directly applying the data constructor, which would need to be supplied with `Set` type values from `Data.Set`.
 
 In the type signature I write [SymbolRL] instead of WordRL, because the argument is
 not to be understood as a word, but as a list of symbols, that will be translated into a
@@ -45,7 +45,7 @@ an alphabet i.e. a set of symbols.
 #### validNFA
 *Not yet implemented!*
 ```haskell
-validNFA :: (Ord a, EdgeLabel b) => NFA a b -> Bool
+validNFA :: (Ord a, ELabel b) => NFA a b -> Bool
 ```
 Checks if an NFA is defined correctly.
 Returns False if any of the following holds
@@ -87,19 +87,19 @@ Returns all the states of an NFA, that satisfy the condition from `getReachableS
 ```haskell
 toIntNFA :: (Ord a, Ord b) => Int -> NFA a b -> NFA Int b
 ```
-Takes and NFA and converts it into an equivalent NFA, which has Int type states starting with smallest
-This can be useful to "simplify" an NFA by "relabeling" it's states with integers starting from `0`.
-It also can be used to homogenise the type of different NFAs, To prepare for other operations.
+Takes and NFA and converts it into an equivalent NFA, which has `Int` type states starting with the value of the first argument.
+This can be useful to "simplify" an NFA by "relabeling" it's states with integers.
+It also can be used to homogenise the type of different NFAs, to prepare for other operations.
 
 #### union
 ```haskell
-union :: (Ord a, Ord b, Ord c, EdgeLabel c) => NFA a c -> NFA b c -> NFA Int c
+union :: (Ord a, Ord b, Ord c, ELabel c) => NFA a c -> NFA b c -> NFA Int c
 ```
 Takes two NFAs and returns an NFA that recognizes the language which is the union of the languages recognized by the input NFAs.
 
 #### replaceEmptyEdges
 ```haskell
-replaceEmptyEdges :: (Ord a, Ord b, EdgeLabel b) => NFA a b -> NFA a b
+replaceEmptyEdges :: (Ord a, Ord b, ELabel b) => NFA a b -> NFA a b
 ```
 converts an NFA into an NFA that recognizes the same language, but does not contain any edges labeled with the empty word.
 
@@ -125,18 +125,18 @@ Removes all given states from an NFA, as well as the associated Edges.
 ```haskell
 simplify :: (Ord a, Ord b) => NFA a b -> NFA a b
 ```
-Removes all states from an NFA, that can never be reached or from where no acceptance state can be reached, as well as the associated Edges. The resulting NFA recognizes the same language as the input NFA.
+Removes all states from an NFA that can never be reached or from where no acceptance state can be reached, as well as the associated Edges. The resulting NFA is equivalent to the input NFA.
 
 ### Analysing Recognized Languages
 
-#### accepts
+#### acceptsNFA
 ```haskell
-accepts :: (Ord a) => NFA a WordRL -> WordRL -> Maybe Bool
+acceptsNFA :: (Ord a) => NFA a WordRL -> WordRL -> Maybe Bool
 ```
 Verify if a word is accepted by a given NFA
 
-Returns Nothing if the word does contain symbols which are not in the alphabet of the NFA.
-Otherwise returns Just True or Just False if the word was accepted or not accepted respectively
+Returns `Nothing` if the word does contain symbols which are not in the alphabet of the NFA.
+Otherwise returns `Just True` or `Just False` if the word was accepted or not accepted respectively
 
 ### Kleene-operations
 
@@ -144,19 +144,21 @@ Otherwise returns Just True or Just False if the word was accepted or not accept
 ```haskell
 kleeneNumber :: (Ord a) => Int -> S.Set a -> [[a]]
 ```
-Returns a List of all possible lists with elements from the input set of length of the input number.
+Returns a list of all possible lists with elements from the input set of length of the input number.
 
 #### kleeneStar
 ```haskell
 kleeneStar :: (Ord a) => S.Set a -> [[a]]
 ```
 Returns a list of all finite lists composable by the elements of the input set.
+The output will always be an infinite list.
 
 #### kleenePlus
 ```haskell
 kleenePlus :: (Ord a) => S.Set a -> [[a]]
 ```
 Returns a list of all finite lists composable by the elements of the input set, leaves out the empty list.
+The output will always be an infinite list.
 
 ### Testing and Comparing NFAs
 
