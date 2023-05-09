@@ -1,9 +1,11 @@
 -- Copyright: (c) 2023, Alrik Neumann
 -- GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-module NFA (NFA,makeNFA,acceptsNFA,getReachableStates,getCoReachableStates,getTrimStates,removeStates,simplify,toIntNFA,union,replaceEmptyEdges,replaceWordEdges,replaceSetValuedEdges,kleeneNumber,kleeneStar,kleenePlus) where
+{-# LANGUAGE TupleSections #-}
 
-import qualified Data.Maybe     as M  (fromJust,isNothing) 
+module NFA (NFA,makeNFA,acceptsNFA,getReachableStates,getCoReachableStates,getTrimStates,removeStates,simplify,toIntNFA,unionNFA,replaceEmptyEdges,replaceWordEdges,replaceSetValuedEdges,kleeneNumber,kleeneStar,kleenePlus) where
+
+import qualified Data.Maybe     as M  (isJust,fromJust,isNothing) 
 import qualified Data.Bifunctor as BF (first,second)
 import qualified Data.Set       as S
 
@@ -78,9 +80,11 @@ data Grammar = G {variables   :: AlphabetRL,
 
 class ELabel a where
   containedPart      :: a -> WordRL -> Maybe (WordRL,WordRL)
-  -- Splits a word into the part at a beginnin which is contained in a label
+  -- Splits a word into the part at the beginning which is contained in a label
   -- and the rest.
   -- Returns Nothing if the label does not accept the word.
+  -- Attention:
+  -- Always returns Nothing, when the word is empty, even, when the label is the empty label
   leftAfterTraversal :: a -> WordRL -> Maybe (S.Set WordRL)
   -- Returns Nothing if edge can not be legally traversed with this
   -- word otherwise returns Just the set of all possible remaining
@@ -124,7 +128,7 @@ instance ELabel WordRL where
     | lengthMatching == lengthLabel = Just (label,drop lengthLabel word)
     | otherwise                     = Nothing
     where
-      lengthLabel    = lengthLabel
+      lengthLabel    = length label
       lengthMatching = length
                      $ takeWhile (== True)
                      $ zipWith (==) label word
@@ -228,9 +232,14 @@ class RegLang a where
   accepts       :: a -> WordRL -> Maybe Bool
   toList        :: a -> LanguageRL
   toStandardNFA :: a -> NFA Int WordRL
-  -- toRegEx   :: a -> RegEx
-  -- toGrammar :: a -> Grammar
-  -- addWord   :: a -> WordRL -> a
+  -- toRegEx       :: a -> RegEx
+  -- toGrammar     :: a -> Grammar
+  -- addWord       :: a -> WordRL -> a
+  -- union         :: a -> a -> a
+  -- intersection  :: a -> a -> a
+  -- difference    :: a -> a -> a
+  -- kleene        :: a -> a
+  -- concat        :: a -> a
 
 -- Only implemented for NFA a WordRL yet, because the
 -- acceptsNFA function only works with this type yet.
@@ -351,8 +360,8 @@ toIntNFA smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFinish
 -- starting by converting both NFAs to NFA Int.
 -- This would have led to much more complicated code, as I could not just have used the union operation
 -- to merge the two NFAs.
-union :: (Ord a, Ord b, Ord c) => NFA a c -> NFA b c -> NFA Int c
-union nfa nfb = NFA newStates newSigma newDelta newStart newFinish
+unionNFA :: (Ord a, Ord b, Ord c) => NFA a c -> NFA b c -> NFA Int c
+unionNFA nfa nfb = NFA newStates newSigma newDelta newStart newFinish
   where
     newStates = S.union (states nfaInt) (states nfbInt)
     newSigma  = S.union (sigma  nfaInt) (sigma  nfbInt)
@@ -373,7 +382,7 @@ insertNFAasEdge nfa fromState toState nfb = undefined
 replaceEmptyEdges :: (Ord a, Ord b, ELabel b) => NFA a b -> NFA a b
 replaceEmptyEdges nfa = nfa {delta = newDelta, start = newStart}
   where
-    newStart   = processEmptyEdges (delta nfa) (start nfa)
+    newStart   = getEmptyReachableStates nfa (start nfa)
     newDelta   = go (delta nfa) (emptyEdges $ delta nfa)
     emptyEdges = S.filter (isEmptyLabel . snd . fst)
     go delt eps
@@ -471,66 +480,74 @@ extendStatesByRule nfa rule = S.unions . takeWhile (not . S.null) . applyRepeate
 -- Returns Nothing if the word does contain symbols which are not in the alphabet of the NFA.
 -- Otherwise returns Just True or Just False if the word was accepted or not accepted respectively
 --
--- The general strategy is, that the symbols of the word will be examined one by one,
--- each time modifying the set of reached states until no symbols are left anymore.
--- Then it will be checked if there are members of the acceptable states (finish) inside of
--- the set of reached states to see, if the word was accepted.
--- 
--- The main difficulties in this functions implementation is to devise a way by which
--- to properly handle epsilon-labeled edges and edges which are labeled with words
--- of length greater than 1.
---
--- The first difficulty is handled by the function processEmptyEdges, which,
--- given a set of transition rules (delta), takes a set of states and adds all the
--- states to it, which are reachable from members of this set via epsilon-edges.
---
--- The second difficulty is handled by keeping track of partly resolved arrows,
--- which are kept inside of the "pending" set, which is passed on alongside the set
--- of reached states at each iteration
---
--- The single iterations are performed by the function nextStatesPending, which alongside the
--- set of transition rules (delta) and the currently examined symbol of the input word, takes the
--- set of currently reached states and a set of only partly resolved arrows (pending) as input and
--- returns a tuple of the new reached states and the new partly resolved arrows.
-acceptsNFA :: (Ord a) => NFA a WordRL -> WordRL -> Maybe Bool
+-- First a list is created, that contains all the start states, attached with the input word to them.
+-- Each of these (word,state) tuples, can be understood as one moment during the parallel nondeterministic
+-- execution of the NFA.
+-- Then this list is iteratively traversed.
+-- During each iteration each of these "moments" disappears or creates a number of new "moments",
+-- depending on which other states are reachable by what edges.
+-- When a "moment" is reached in which the word part is empty, it is returned True,
+-- if the associated state is one of the accepted states of the NFA. Otherwise
+-- the "moment" gets dropped from the list and won't be considered anymore in the future.
+acceptsNFA :: (Ord a, ELabel b) => NFA a b -> WordRL -> Maybe Bool
 acceptsNFA nfa word
-  | S.isSubsetOf (S.fromList word) (sigma nfa) = Just $ go (start nfa) S.empty word
-  | otherwise                                  = Nothing
+  | not $ S.isSubsetOf (S.fromList word) (sigma nfa) = Nothing
+  | otherwise = Just 
+              $ execute S.empty
+              $ map (word,)
+              $ S.toList
+              $ start nfa
   where
-    go states pending []     = not $ S.disjoint (finish nfa) $ processEmptyEdges (delta nfa) states
-    go states pending (s:ss) = go newStates newPending ss
-      where
-        (newStates,newPending) = nextStatesPending (delta nfa) s states pending
+    -- execute handles the iterative traversal of the list of "moments"
+    execute acc []
+      | S.null acc              = False
+      | otherwise               = execute S.empty $ S.toList acc
+    execute acc (([],q):qs)
+      | S.member q $ finish nfa = True
+      | otherwise               = execute acc qs
+    execute acc ((w,q):qs)  = execute (S.union (followStates (w,q)) acc) qs
+    followStates            = S.unions . S.map follow1State . followEmptyEdges
+    -- follow1State returns all the states reachable by traversing one (non-empty)
+    -- edge from q with w.
+    -- I separate following empty-labeled edges and normal edges, to make sure
+    -- that after an empty-labeled edge got followed, it will not be followed again
+    -- from the same "moment", but only during a "moment" in the future, where the
+    -- moment's is a different one.
+    -- Without this precaution, there are scenarios, where with certain NFA's infinite
+    -- loops of empty-edge-following could appear.
+    follow1State (w,q)      = S.unions
+                            $ S.map (follow1Edge w)
+                            $ S.filter (M.isJust . flip containedPart w . snd . fst)
+                            $ S.filter (not . isEmptyLabel . snd . fst)
+                            $ S.filter ((==q) . fst . fst)
+                            $ delta nfa
+    -- follow1Edge takes a word and an edge and returns all the "moments",
+    -- we could have after traversing this edge with the word.
+    -- For an ELabel of type SymbolRL or WordRL the output is just (w,) mapped to
+    -- the set of the destination states of the edge.
+    -- For an ELabel of type RegEx, there are more possibilities, as one regular
+    -- expression can accepts different words, which also means, that the associated
+    -- edge could be traversed by different words, which would also lead to a more
+    -- diverse set of resulting "moments"
+    follow1Edge w edge      = S.cartesianProduct
+                              (M.fromJust $ leftAfterTraversal (snd $ fst edge) w)
+                              (snd edge)
+    -- addEmptyReachable creates a set with all the (w,q') tuples, where q' is
+    -- reachable from q, by only traversing empty-labeled edges.
+    followEmptyEdges (w,q)  = S.map (w,)
+                            $ getEmptyReachableStates nfa
+                            $ S.singleton q
 
-nextStatesPending :: (Ord a) => Delta a WordRL -> SymbolRL -> States a -> S.Set (WordRL,S.Set a) -> (States a, S.Set (WordRL,S.Set a))
-nextStatesPending delta symbol states pending = newStatesPending tmpPending
+getEmptyReachableStates :: (Ord a, ELabel b) => NFA a b -> States a -> States a
+getEmptyReachableStates nfa = extendStatesByRule nfa followEmptyEdges
   where
-    newStatesPending = go S.empty S.empty . S.toList
+    followEmptyEdges states = S.difference newStates states
       where
-        go accStates accPending [] = (accStates,accPending)
-        go accStates accPending (p:ps)
-          | fst p == emptyWord = go (S.union (snd p) accStates) accPending ps
-          | otherwise          = go accStates (S.insert p accPending) ps
-    tmpPending = S.union (reducePending pending)
-               $ S.map (\t -> (tail $ snd $ fst t, snd t))
-               $ S.filter (\t -> S.member (fst $ fst t) tmpStates)
-               $ S.filter (\t -> head (snd $ fst t) == symbol)
-               $ S.filter (\t -> snd (fst t) /= emptyWord) delta
-    tmpStates = processEmptyEdges delta states
-    reducePending = S.map (BF.first tail) . S.filter ((==symbol) . head . fst)
-
-processEmptyEdges :: (Ord a, ELabel b) => Delta a b -> States a -> States a
-processEmptyEdges delta = go
-  where
-    deltaEpsilonEdges = S.filter (isEmptyLabel . snd . fst) delta
-    go stateSetOld
-      | S.null stateSetNew = stateSetOld
-      | otherwise          = go $ S.union stateSetOld stateSetNew
-      where
-        -- to avoid infinite loops, we take the difference of a prelimenary new state set and the old state set to determine the new state set.
-        -- This way it is made certain, that `go` won't keep iterating when there are no more new states added to the set of states reachable
-        -- by ε-edges.
-        stateSetNew = S.difference (S.unions $ S.map snd $ S.filter ((`S.member`stateSetOld) . fst . fst) deltaEpsilonEdges) stateSetOld
+        newStates = S.unions
+                  $ S.map snd
+                  $ S.filter (isEmptyLabel . snd . fst)
+                  $ S.filter ((`S.member` states) . fst . fst)
+                  $ delta nfa
 
 -----------------------
 -- Kleene-operations --
@@ -587,7 +604,7 @@ abc = makeNFA [0,1] ['a','b','c'] [((0,"abc"),[1])] [0] [1]
 
 abcNoWords = replaceWordEdges abc
 
-unionEndsWith1even1s = endsWith1 `union` even1s
+unionEndsWith1even1s = endsWith1 `unionNFA` even1s
 
 -- notEndsWith1 = complementNFA endsWith1
 

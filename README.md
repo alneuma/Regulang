@@ -81,7 +81,11 @@ getTrimStates :: (Ord a) => NFA a b -> States a
 ```
 Returns all the states of an NFA, that satisfy the condition from `getReachableStates` as well as the one from `getCoReachableStates`.
 
-### Manipulating NFAs
+#### getEmptyReachableStates
+```haskell
+getEmptyReachableStates :: (Ord a, ELabel b) => NFA a b -> States a -> States a
+```
+Returns all the states which in a given NFA, from a given set of states are reachable by only traversing empty-labeled edges.
 
 #### toIntNFA
 ```haskell
@@ -91,9 +95,9 @@ Takes and NFA and converts it into an equivalent NFA, which has `Int` type state
 This can be useful to "simplify" an NFA by "relabeling" it's states with integers.
 It also can be used to homogenise the type of different NFAs, to prepare for other operations.
 
-#### union
+#### unionNFA
 ```haskell
-union :: (Ord a, Ord b, Ord c, ELabel c) => NFA a c -> NFA b c -> NFA Int c
+unionNFA :: (Ord a, Ord b, Ord c) => NFA a c -> NFA b c -> NFA Int c
 ```
 Takes two NFAs and returns an NFA that recognizes the language which is the union of the languages recognized by the input NFAs.
 
@@ -125,13 +129,13 @@ Removes all given states from an NFA, as well as the associated Edges.
 ```haskell
 simplify :: (Ord a, Ord b) => NFA a b -> NFA a b
 ```
-Removes all states from an NFA that can never be reached or from where no acceptance state can be reached, as well as the associated Edges. The resulting NFA is equivalent to the input NFA.
+Removes all states from an NFA that can never be reached or from where no acceptance state can be reached, as well as the associated edges. The resulting NFA is equivalent to the input NFA.
 
 ### Analysing Recognized Languages
 
 #### acceptsNFA
 ```haskell
-acceptsNFA :: (Ord a) => NFA a WordRL -> WordRL -> Maybe Bool
+acceptsNFA :: (Ord a, ELabel b) => NFA a b -> WordRL -> Maybe Bool
 ```
 Verify if a word is accepted by a given NFA
 
