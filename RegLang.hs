@@ -50,6 +50,7 @@ data RegEx = RE SymbolRL
            | Concat RegEx RegEx
            | Union RegEx RegEx
            deriving Show
+
 instance Eq RegEx where
   r == r' = show r == show r'
 instance Ord RegEx where
