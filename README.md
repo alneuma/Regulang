@@ -7,7 +7,50 @@ GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/license
 
 I am implementing this small module to help me study regular languages and the theory of computation.
 The goal is to implement different types of representations of regular languages and make it possible to translate between them.
-So far I have implemented some functionality for [nondeterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs), enclosed in the `NFA.hs` file. [Deterministic finite automations](https://en.wikipedia.org/wiki/Deterministic_finite_automaton) (DFAs) are treated as a special case of NFAs, as they mathematically are.
+So far I have implemented some functionality for [nondeterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs), enclosed in the `NFA.hs` file. As well as some functionality for regular expressions.
+[Deterministic finite automations](https://en.wikipedia.org/wiki/Deterministic_finite_automaton) (DFAs) are treated as a special case of NFAs, as they mathematically are.
+
+## The RegLang Typeclass
+
+```haskell
+class RegLang a where
+  accepts      :: a -> WordRL -> Maybe Bool
+  toList       :: a -> [WordRL]
+  toWordNFA    :: (Integral b) => a -> NFA b WordRL
+  fromWordNFA  :: (Integral b) => NFA b WordRL -> a
+  addWord      :: a -> WordRL -> a
+  union        :: a -> a -> a
+  intersection :: a -> a -> a
+  difference   :: a -> a -> a
+  concat       :: a -> a -> a
+  kleene       :: a -> a
+```
+
+### Instances
+
+So far there are three instances of `RegLang`:
+
+#### NFAs
+```haskell
+instance (Integral a, ELabel b) => RegLang (NFA a b)
+```
+Besides `fromList`, `intersection` and `difference` this is fully implemented.
+
+`ELabel` is a class for types, that can be used as labels for the edges of an NFA. Instances are `Symbol RL`, `WordRL` and `RegEx`.
+
+#### regular expressions
+```haskell
+instance RegLang RegEx
+```
+Only `addWord`, `kleene`, `concat` and `union` are implemented.
+
+#### grammars
+```haskell
+instance RegLang Grammar
+```
+Nothing implemented yet.
+
+## NFAs
 
 ### Creating and analysing NFAs
 
