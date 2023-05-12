@@ -368,14 +368,16 @@ makeNFA states sigma delta start finish = NFA newStates newSigma newDelta newSta
 --
 -- Needs general rewrite also to handle ε-lableded arrows
 validNFA :: (Ord a, ELabel b) => NFA a b -> Bool
-validNFA inputFA = True
---                    S.isSubsetOf (start  inputFA) (states inputFA) &&
---                    S.isSubsetOf (finish inputFA) (states inputFA) &&
---                    S.isSubsetOf deltaLeft (S.cartesianProduct (states inputFA) (sigma inputFA)) -- &&
---                    --S.empty (S.filter (not . (`S.isSubsetOf` (states inputFA))) deltaRight)
---   where
---     deltaLeft  = S.map ((\(arg,[val]) -> (arg,val)) . fst) (delta inputFA)
---     deltaRight = S.map snd (delta inputFA)
+validNFA nfa = not (S.null $ start nfa) &&
+               S.isSubsetOf allStates (states nfa) &&
+               S.isSubsetOf deltaAlphabet (sigma nfa)
+   where
+     allStates     = S.unions [start nfa, finish nfa, deltaFrom, deltaTo]
+     deltaFrom     = S.map (fst . fst) (delta nfa)
+     deltaTo       = S.unions
+                   $ S.map snd (delta nfa)
+     deltaAlphabet = S.unions
+                   $ S.map (getAlphabet . snd . fst) (delta nfa)
 
 getTrimStates :: (Ord a) => NFA a b -> States a
 getTrimStates nfa = S.intersection (getReachableStates nfa) (getCoReachableStates nfa)

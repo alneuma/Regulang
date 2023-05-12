@@ -123,17 +123,17 @@ not to be understood as a word, but as a list of symbols, that will be translate
 an alphabet i.e. a set of symbols.
 
 ##### validNFA
-*Not yet implemented!*
 ```haskell
 validNFA :: (Ord a, ELabel b) => NFA a b -> Bool
 ```
 Checks if an NFA is defined correctly.
 Returns False if any of the following holds
+- start is empty
 - start is no subset of states
 - finish is no subset of states
-- not all left entries of delta have their left entries in states or their right entry as an empty
-  list or with a single argument, that is in sigma
-- the set of the right entries of delta is not a subset of states
+- the set of all left first entries of the first entry of delta is not a subset of states
+- union of all left entries of delta is not a subset of states
+- set set of all the symbols used by all second entries of the first entry of delta (the edge-labels) is not a subset of sigma
 Otherwise returns True.
 
 ##### validDFA
