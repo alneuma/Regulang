@@ -73,7 +73,7 @@ instance (Integral a, ELabel b) => RegLang (NFA a b)
 ```
 Besides `fromList`, `intersection` and `difference` this is fully implemented.
 
-`ELabel` is a class for types that can be used as labels for the edges of an NFA. Instances are `Symbol RL`, `WordRL` and `RegEx`.
+`ELabel` is a class for types that can be used as labels for the edges of an NFA. Instances of `ELabel` are `Symbol RL`, `WordRL` and `RegEx`.
 
 ##### regular expressions
 ```haskell
