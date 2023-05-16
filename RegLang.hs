@@ -3,7 +3,7 @@
 
 {-# LANGUAGE TupleSections #-}
 
-module RegLang (accepts,toList,toWordNFA,fromWordNFA,addWord,union,intersection,difference,RegLang.concat,kleene,NFA,makeNFA,getReachableStates,getCoReachableStates,getTrimStates,removeStates,simplify,toIntegralNFA,unionNFA,replaceEmptyEdges,replaceWordEdges,replaceSetValuedEdges,kleeneNumber,kleeneStar,kleenePlus) where
+module RegLang (accepts,toList,toWordNFA,addWord,union,intersection,difference,concatenate,kleene,NFA,makeNFA,getReachableStates,getCoReachableStates,getTrimStates,removeStates,simplify,toIntegralNFA,unionNFA,replaceEmptyEdges,replaceWordEdges,replaceSetValuedEdges,kleeneNumber,kleeneStar,kleenePlus) where
 
 import qualified Data.Maybe     as M  (isJust,fromJust,isNothing) 
 import qualified Data.Bifunctor as BF (first,second)
@@ -138,14 +138,21 @@ instance ELabel SymbolRL where
     where
       lengthIntegral = fromInteger $ toInteger $ length word
       delta = zip (zip [0..lengthIntegral] word) (map (:[]) [1..lengthIntegral])
-  -- insertEmptyEdge :: (Ord b) => NFA b SymbolRL -> b -> b -> NFA b SymbolRL
-  -- insertEmptyEdge = undefined
+
+  insertEmptyEdge :: (Ord b) => NFA b SymbolRL -> b -> b -> NFA b SymbolRL
+  insertEmptyEdge nfa q q' = nfa {delta = newDelta}
+    where
+      newDelta = S.union (delta nfa)
+               $ S.map (\((_,s),rs) -> ((q,s),rs))
+               $ S.filter ((==q') . fst . fst)
+               $ delta nfa
 
 instance ELabel WordRL where
   toRegex :: WordRL -> RegEx
   toRegex []   = EmptyWord
-  toRegex word = foldl1 Concat $ map RE word
-  -- containedPart :: WordRL -> WordRL -> Maybe (WordRL,WordRL)
+  toRegex word = foldr1 Concat $ map RE word
+
+  containedPart :: WordRL -> WordRL -> Maybe (WordRL,WordRL)
   containedPart label word
     | lengthMatching == lengthLabel = Just (label,drop lengthLabel word)
     | otherwise                     = Nothing
@@ -154,21 +161,27 @@ instance ELabel WordRL where
       lengthMatching = length
                      $ takeWhile (== True)
                      $ zipWith (==) label word
-  -- leftAfterTraversal :: WordRL -> WordRL -> Maybe (S.Set WordRL)
+
+  leftAfterTraversal :: WordRL -> WordRL -> Maybe (S.Set WordRL)
   leftAfterTraversal label word
     | M.isNothing parts = Nothing
     | otherwise         = Just $ S.singleton $ snd $ M.fromJust parts
     where
       parts = containedPart label word
-  -- isSingletonLabel :: WordRL -> Bool
+
+  isSingletonLabel :: WordRL -> Bool
   isSingletonLabel word = length word == 1
-  -- isEmptyLabel :: WordRL -> Bool
+
+  isEmptyLabel :: WordRL -> Bool
   isEmptyLabel = (==) emptyWord
-  -- getAlphabet :: WordRL -> AlphabetRL
+
+  getAlphabet :: WordRL -> AlphabetRL
   getAlphabet = S.fromList
-  -- word2NFA :: (Integral b) => WordRL -> NFA b WordRL
+
+  word2NFA :: (Integral b) => WordRL -> NFA b WordRL
   word2NFA word = makeNFA [0,1] (S.toList $ getAlphabet word) [((0,word),[1])] [0] [1]
-  -- insertEmptyEdge :: (Ord b) => NFA b WordRL -> b -> b -> NFA b WordRL
+
+  insertEmptyEdge :: (Ord b) => NFA b WordRL -> b -> b -> NFA b WordRL
   insertEmptyEdge nfa q q' = nfa {states = newStates,
                                   delta  = newDelta}
     where
@@ -182,26 +195,31 @@ instance ELabel RegEx where
   -- containedPart = undefined
   -- leftAfterTraversal :: RegEx -> WordRL -> Maybe (S.Set WordRL)
   -- leftAfterTraversal = undefined
-  -- isSingletonLabel :: RegEx -> Bool
+
+  isSingletonLabel :: RegEx -> Bool
   isSingletonLabel (RE _) = True
   isSingletonLabel _      = False
-  -- isEmptyLabel :: RegEx -> Bool
+
+  isEmptyLabel :: RegEx -> Bool
   isEmptyLabel (RE _)        = False
   isEmptyLabel EmptySet      = False
   isEmptyLabel EmptyWord     = True
   isEmptyLabel (Kleene r)    = True
   isEmptyLabel (Concat r r') = isEmptyLabel r && isEmptyLabel r'
   isEmptyLabel (Union  r r') = isEmptyLabel r || isEmptyLabel r'
-  -- getAlphabet :: RegEx -> AlphabetRL
+
+  getAlphabet :: RegEx -> AlphabetRL
   getAlphabet (RE s)        = S.singleton s
   getAlphabet EmptySet      = S.empty
   getAlphabet EmptyWord     = S.empty
   getAlphabet (Kleene r)    = getAlphabet r
   getAlphabet (Concat r r') = S.union (getAlphabet r) (getAlphabet r')
   getAlphabet (Union  r r') = S.union (getAlphabet r) (getAlphabet r')
-  -- word2NFA :: (Integral b) => WordRL -> NFA b RegEx
+
+  word2NFA :: (Integral b) => WordRL -> NFA b RegEx
   word2NFA word = makeNFA [0,1] (S.toList $ getAlphabet word) [((0,toRegex word),[1])] [0] [1]
-  -- insertEmptyEdge :: (Ord b) => NFA b RegEx -> b -> b -> NFA b RegEx
+
+  insertEmptyEdge :: (Ord b) => NFA b RegEx -> b -> b -> NFA b RegEx
   insertEmptyEdge nfa q q' = nfa {states = newStates,
                                   delta  = newDelta}
     where
@@ -268,11 +286,12 @@ class RegLang a where
   accepts      :: a -> WordRL -> Maybe Bool
   toList       :: a -> [WordRL]
   fromList     :: [WordRL] -> a
+  toDFA        :: (Integral b) => a -> NFA b SymbolRL
   toWordNFA    :: (Integral b) => a -> NFA b WordRL
-  fromWordNFA  :: (Integral b) => NFA b WordRL -> a
+  fromNFA      :: (Integral b, ELabel c) => NFA b c -> a
   addWord      :: a -> WordRL -> a
   union        :: a -> a -> a
-  concat       :: a -> a -> a
+  concatenate  :: a -> a -> a
   kleene       :: a -> a
   intersection :: a -> a -> a
   difference   :: a -> a -> a
@@ -293,9 +312,9 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
   addWord :: NFA a b -> WordRL -> NFA a b
   addWord nfa = union nfa . word2NFA
 
-  concat :: (Integral a, ELabel b) => NFA a b -> NFA a b -> NFA a b
-  concat nfa nfb = S.foldl (\acc (q,q') -> insertEmptyEdge acc q q') tmpNFA
-                 $ S.cartesianProduct tmpFinish tmpStart
+  concatenate :: (Integral a, ELabel b) => NFA a b -> NFA a b -> NFA a b
+  concatenate nfa nfb = S.foldl (\acc (q,q') -> insertEmptyEdge acc q q') tmpNFA
+                 $ S.cartesianProduct (finish nfaInt) (start nfbInt)
     where
       tmpNFA = NFA tmpStates tmpSigma tmpDelta tmpStart tmpFinish
       tmpStates = S.union (states nfaInt) (states nfbInt)
@@ -325,11 +344,34 @@ instance RegLang RegEx where
   union :: RegEx -> RegEx -> RegEx
   union = Union
 
-  concat :: RegEx -> RegEx -> RegEx
-  concat = Concat
+  concatenate :: RegEx -> RegEx -> RegEx
+  concatenate = Concat
 
   kleene :: RegEx -> RegEx
   kleene = Kleene
+
+  toWordNFA :: (Integral a) => RegEx -> NFA a WordRL
+  toWordNFA (RE x)       = NFA (S.fromList [0,1])
+                               (S.singleton x)
+                               (S.singleton ((0,[x]),S.singleton 1))
+                               (S.singleton 0)
+                               (S.singleton 1)
+  toWordNFA EmptySet     = NFA (S.singleton 0)
+                                S.empty
+                                S.empty
+                               (S.singleton 0)
+                                S.empty
+  toWordNFA EmptyWord    = NFA (S.singleton 0)
+                                S.empty
+                                S.empty
+                               (S.singleton 0)
+                               (S.singleton 0)
+  toWordNFA (Kleene x)   = kleene $ toWordNFA x
+  toWordNFA (Union x y)  = toWordNFA x `union` toWordNFA y
+  toWordNFA (Concat x y) = toWordNFA x `concatenate` toWordNFA y
+
+  accepts :: RegEx -> WordRL -> Maybe Bool
+  accepts regex = accepts (toWordNFA regex)
 
 instance RegLang Grammar where
 
@@ -698,3 +740,13 @@ zeros2div3divNoEps = replaceEmptyEdges zeros2div3div
 -- testReplaceEmptyEdges = recognizeSameLanguage 20 zeros2div3div zeros2div3divNoEps $ S.toList $ kleeneStar $ S.singleton '0'
 
 testTrimNFA = makeNFA [0..10] "0" (zip (zip [1,2,3,5,7,8,9,10] $ repeat ['0']) [[2,5],[3],[4],[6],[8],[4],[10],[9]]) [1] [4]
+
+test_001 = toWordNFA (Concat (RE '0') (Concat (RE '0') (RE '1')))
+test_0 = toWordNFA (RE '0')
+test_1 = toWordNFA (RE '1')
+conc01 = test_0 `concatenate` test_1
+test_emptySet = toWordNFA EmptySet
+test_emptyWord = toWordNFA EmptyWord
+
+printNFA :: (Show a, ShowRL b) => NFA a b -> IO ()
+printNFA nfa = putStrLn $ showRL nfa
