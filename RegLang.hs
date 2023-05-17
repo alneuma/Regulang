@@ -234,6 +234,8 @@ instance ELabel RegEx where
 
 class ShowRL a where
   showRL :: a -> String
+  printRL :: a -> IO ()
+  printRL = putStrLn . showRL
 
 instance ShowRL SymbolRL where
   showRL = show
@@ -295,6 +297,7 @@ class RegLang a where
   kleene       :: a -> a
   intersection :: a -> a -> a
   difference   :: a -> a -> a
+  simplify     :: a -> a
 
 -- Only implemented for NFA a WordRL yet, because the
 -- acceptsNFA function only works with this type yet.
@@ -337,6 +340,9 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
       newFinish = S.insert 0 $ finish intNFA
       intNFA    = toIntegralNFA 1 nfa
 
+  simplify :: (Ord a, Ord b) => NFA a b -> NFA a b
+  simplify nfa = removeStates nfa (S.difference (states nfa) $ getTrimStates nfa)
+
 instance RegLang RegEx where
   addWord :: RegEx -> WordRL -> RegEx
   addWord regex = Union regex . toRegex
@@ -373,7 +379,29 @@ instance RegLang RegEx where
   accepts :: RegEx -> WordRL -> Maybe Bool
   accepts regex = accepts (toWordNFA regex)
 
+  simplify :: RegEx -> RegEx
+  simplify (Union  EmptySet r)  = simplify r
+  simplify (Union  r EmptySet)  = simplify r
+  simplify (Union  r r')        = Union (simplify r) (simplify r')
+  simplify (Concat EmptySet r)  = EmptySet
+  simplify (Concat r EmptySet)  = EmptySet
+  simplify (Concat r EmptyWord) = simplify r
+  simplify (Concat EmptyWord r) = simplify r
+  simplify (Concat r r')        = Concat (simplify r) (simplify r')
+  simplify (Kleene EmptySet)    = EmptyWord
+  simplify (Kleene EmptyWord)   = EmptyWord
+  simplify r                    = r
+
+  fromNFA :: (Integral a, ELabel b) => NFA a b -> RegEx
+  fromNFA nfa = regex
+    where
+      regex = undefined
+      reNFA = (simplify nfa) {delta = reDelta}
+      reDelta = S.map (\((q,l),rs) -> ((q, toRegex l), rs)) $ delta $ simplify nfa
+      -- replaceEmptyEdges
+
 instance RegLang Grammar where
+  -- yet to be implemented
 
 -------------
 -------------
@@ -570,9 +598,6 @@ removeStates nfa statesToRemove = nfa {states = newStates,
               $ S.filter ((`S.member` newStates) . fst . fst)
               $ delta nfa
 
-simplify :: (Ord a, Ord b) => NFA a b -> NFA a b
-simplify nfa = removeStates nfa (S.difference (states nfa) $ getTrimStates nfa)
-
 -- private function, used for a number of other functions
 -- 
 -- Given an NFA, a set of states and a rule that specifies, how to add states to an already existing set of states
@@ -747,6 +772,3 @@ test_1 = toWordNFA (RE '1')
 conc01 = test_0 `concatenate` test_1
 test_emptySet = toWordNFA EmptySet
 test_emptyWord = toWordNFA EmptyWord
-
-printNFA :: (Show a, ShowRL b) => NFA a b -> IO ()
-printNFA nfa = putStrLn $ showRL nfa
