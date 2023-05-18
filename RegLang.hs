@@ -3,7 +3,7 @@
 
 {-# LANGUAGE TupleSections #-}
 
-module RegLang (accepts,toList,toWordNFA,addWord,union,intersection,difference,concatenate,kleene,NFA,makeNFA,getReachableStates,getCoReachableStates,getTrimStates,removeStates,simplify,toIntegralNFA,unionNFA,replaceEmptyEdges,replaceWordEdges,replaceSetValuedEdges,kleeneNumber,kleeneStar,kleenePlus) where
+module RegLang (accepts,toList,toWordNFA,addWord,union,intersection,difference,concatenate,kleene,NFA,makeNFA,getReachableStates,getCoReachableStates,getTrimStates,removeStates,simplify,renameStates,unionNFA,replaceEmptyEdges,replaceWordEdges,replaceSetValuedEdges,kleeneNumber,kleeneStar,kleenePlus) where
 
 import qualified Data.Maybe     as M  (isJust,fromJust,isNothing) 
 import qualified Data.Bifunctor as BF (first,second)
@@ -63,6 +63,25 @@ data Grammar = G {variables   :: AlphabetRL,
                   rules       :: S.Set (WordRL,WordRL),
                   startG      :: SymbolRL}
                   deriving (Show, Eq)
+
+-------------------------------------------
+-------------------------------------------
+---- GENERAL PURPOSE INTERNAL FUNCTION ----
+-------------------------------------------
+-------------------------------------------
+
+--------------------
+-- TransitionRule --
+--------------------
+
+getFrom :: TransitionRule a b -> a
+getFrom ((q,_),_) = q
+
+getTo :: TransitionRule a b -> S.Set a
+getTo (_,q) = q
+
+getLabel :: TransitionRule a b -> b
+getLabel ((_,a),_) = a
 
 ---------------------
 ---------------------
@@ -144,7 +163,7 @@ instance ELabel SymbolRL where
     where
       newDelta = S.union (delta nfa)
                $ S.map (\((_,s),rs) -> ((q,s),rs))
-               $ S.filter ((==q') . fst . fst)
+               $ S.filter ((==q') . getFrom)
                $ delta nfa
 
 instance ELabel WordRL where
@@ -325,8 +344,8 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
       tmpDelta  = S.union (delta  nfaInt) (delta  nfbInt)
       tmpStart  = start  nfaInt
       tmpFinish = finish nfbInt
-      nfaInt = toIntegralNFA 0 nfa
-      nfbInt = toIntegralNFA (fromInteger $ toInteger $ S.size $ states nfa) nfb
+      nfaInt = renameStates 0 nfa
+      nfbInt = renameStates (fromInteger $ toInteger $ S.size $ states nfa) nfb
 
   kleene :: (Integral a, ELabel b) => NFA a b -> NFA a b
   kleene nfa = S.foldl (\acc (q,q') -> insertEmptyEdge acc q q') newNFA
@@ -338,7 +357,7 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
                           finish = newFinish}
       newStart  = S.singleton 0
       newFinish = S.insert 0 $ finish intNFA
-      intNFA    = toIntegralNFA 1 nfa
+      intNFA    = renameStates 1 nfa
 
   simplify :: (Ord a, Ord b) => NFA a b -> NFA a b
   simplify nfa = removeStates nfa (S.difference (states nfa) $ getTrimStates nfa)
@@ -399,6 +418,26 @@ instance RegLang RegEx where
       reNFA = (simplify nfa) {delta = reDelta}
       reDelta = S.map (\((q,l),rs) -> ((q, toRegex l), rs)) $ delta $ simplify nfa
       -- replaceEmptyEdges
+
+toGNFA :: (Integral a, ELabel b) => NFA a b -> NFA a RegEx
+toGNFA nfa = newNFA {states = newStates,
+                     delta  = newDelta,
+                     start  = newStart,
+                     finish = newFinish}
+  where
+    newNFA    = from2NFA {delta = S.map (\((q,a),r) -> ((q,toRegex a),r)) $ delta from2NFA}
+    from2NFA  = renameStates 2 nfa
+    newStates = S.union (S.fromList [0,1]) (states newNFA)
+    newStart  = S.singleton 0
+    newFinish = S.singleton 1
+    newDelta  = S.unions [delta newNFA, fromNewStartEmptyWord, fromNewStartEmptySet, toNewFinishEmptyWord, toNewFinishEmptySet]
+    fromNewStartEmptyWord = S.singleton ((0,EmptyWord),start newNFA)
+    fromNewStartEmptySet  = S.singleton ((0,EmptySet), states newNFA `S.difference` start newNFA)
+    toNewFinishEmptyWord  = S.map (\q -> ((q,EmptyWord),S.singleton 1))
+                          $ finish newNFA
+    toNewFinishEmptySet   = S.map (\q -> ((q,EmptySet),S.singleton 1))
+                          $ states newNFA `S.difference` finish newNFA
+
 
 instance RegLang Grammar where
   -- yet to be implemented
@@ -493,8 +532,8 @@ getReachableStates nfa = extendStatesByRule nfa followEdges $ start nfa
 -- often could be of Ord-type values.
 -- It also can be used to homogenise the type of different NFAs, which might be necessary for a number
 -- of operations.
-toIntegralNFA :: (Integral a, Ord b, Ord c) => a -> NFA b c -> NFA a c
-toIntegralNFA smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFinish
+renameStates :: (Integral a, Ord b, Ord c) => a -> NFA b c -> NFA a c
+renameStates smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFinish
   where
     newStates = S.fromList $ zipWith const [smallest..] $ S.toAscList $ states nfa
     newDelta  = S.map transitionRule2int $ delta nfa
@@ -517,8 +556,8 @@ unionNFA nfa nfb = NFA newStates newSigma newDelta newStart newFinish
     newDelta  = S.union (delta  nfaInt) (delta  nfbInt)
     newStart  = S.union (start  nfaInt) (start  nfbInt)
     newFinish = S.union (finish nfaInt) (finish nfbInt)
-    nfaInt = toIntegralNFA 0 nfa
-    nfbInt = toIntegralNFA (fromInteger $ toInteger $ S.size $ states nfa) nfb
+    nfaInt = renameStates 0 nfa
+    nfbInt = renameStates (fromInteger $ toInteger $ S.size $ states nfa) nfb
 
 
 
@@ -557,7 +596,7 @@ replaceEmptyEdges nfa = nfa {delta = newDelta, start = newStart}
 replaceWordEdges :: (Ord a) => NFA a WordRL -> NFA Int WordRL
 replaceWordEdges nfa = tmpNFA {states = newStates, delta = newDelta}
   where
-    tmpNFA               = toIntegralNFA 0 nfa
+    tmpNFA               = renameStates 0 nfa
     tmpDelta             = S.difference (delta tmpNFA) wordEdges
     wordEdges            = S.filter ((1<) . length . snd . fst) $ delta tmpNFA
     (newStates,newDelta) = go (S.size $ states tmpNFA) (states tmpNFA) tmpDelta $ S.toList wordEdges
@@ -740,7 +779,7 @@ recognizeLanguageVector n nfa = take n . map (acceptsNFA nfa) . S.toList
 -- an NFA that has an alphabet that consists only of '0' and accepts any number of '0's that is divisible by 2 or 3
 zeros2div3div = makeNFA [0,1,2,3,4,5] ['0'] [((0,emptyWord),[1,3]),((1,['0']),[2]),((2,['0']),[1]),((3,['0']),[4]),((4,['0']),[5]),((5,['0']),[3])] [0] [1,3]
 
-zeros2div3divInt = toIntegralNFA 0 zeros2div3div
+zeros2div3divInt = renameStates 0 zeros2div3div
 
 -- notZeros2div3div = complementNFA zeros2div3div
 
