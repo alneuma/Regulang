@@ -3,7 +3,41 @@
 
 {-# LANGUAGE TupleSections #-}
 
-module RegLang (accepts,toList,toWordNFA,addWord,union,intersection,difference,concatenate,kleene,NFA,makeNFA,getReachableStates,getCoReachableStates,getTrimStates,removeStates,simplify,renameStates,unionNFA,replaceEmptyEdges,replaceWordEdges,replaceSetValuedEdges,kleeneNumber,kleeneStar,kleenePlus) where
+module RegLang (
+                -- general purpose
+                printRL,
+                -- class RegLang functions
+                accepts,
+                toList,
+                fromList,
+                toDFA,
+                toWordNFA,
+                fromNFA,
+                addWord,
+                union,
+                concatenate,
+                kleene,
+                intersection,
+                difference,
+                simplify,
+                -- data constructors
+                NFA,
+                RegEx,
+                -- NFA specific
+                makeNFA,
+                getReachableStates,
+                getCoReachableStates,
+                getTrimStates,
+                removeStates,
+                renameStates,
+                replaceEmptyEdges,
+                replaceWordEdges,
+                replaceSetValuedEdges,
+                -- kleene-operations on sets (alphabets)
+                kleeneNumber,
+                kleeneStar,
+                kleenePlus
+               ) where
 
 import qualified Data.Maybe     as M  (isJust,fromJust,isNothing) 
 import qualified Data.Bifunctor as BF (first,second)
@@ -319,17 +353,81 @@ class RegLang a where
   simplify     :: a -> a
 
 -- Only implemented for NFA a WordRL yet, because the
--- acceptsNFA function only works with this type yet.
+-- accepts function only works with this type yet.
 -- Will be fixed in the future.
 instance (Integral a, ELabel b) => RegLang (NFA a b) where
   toList :: (Integral a, ELabel b) => NFA a b -> [WordRL]
   toList nfa = filter ((== Just True) . accepts nfa) (kleeneStar $ sigma nfa)
 
   union :: (Integral a, ELabel b) => NFA a b -> NFA a b -> NFA a b
-  union = unionNFA
+  union nfa nfb = NFA newStates newSigma newDelta newStart newFinish
+    where
+      newStates = S.union (states nfaInt) (states nfbInt)
+      newSigma  = S.union (sigma  nfaInt) (sigma  nfbInt)
+      newDelta  = S.union (delta  nfaInt) (delta  nfbInt)
+      newStart  = S.union (start  nfaInt) (start  nfbInt)
+      newFinish = S.union (finish nfaInt) (finish nfbInt)
+      nfaInt = renameStates 0 nfa
+      nfbInt = renameStates (fromInteger $ toInteger $ S.size $ states nfa) nfb
+
 
   accepts :: (Integral a, ELabel b) => NFA a b -> WordRL -> Maybe Bool
-  accepts = acceptsNFA
+  -- First a list is created, that contains all the start states, attached with the input word to them.
+  -- Each of these (word,state) tuples, can be understood as one moment during the parallel nondeterministic
+  -- execution of the NFA.
+  -- Then this list is iteratively traversed.
+  -- During each iteration each of these "moments" disappears or creates a number of new "moments",
+  -- depending on which other states are reachable by what edges.
+  -- When a "moment" is reached in which the word part is empty, it is returned True,
+  -- if the associated state is one of the accepted states of the NFA. Otherwise
+  -- the "moment" gets dropped from the list and won't be considered anymore in the future.
+  accepts nfa word
+    | not $ S.isSubsetOf (S.fromList word) (sigma nfa) = Nothing
+    | otherwise = Just 
+                $ execute S.empty
+                $ map (word,)
+                $ S.toList
+                $ start nfa
+    where
+      -- execute handles the iterative traversal of the list of "moments"
+      execute acc []
+        | S.null acc              = False
+        | otherwise               = execute S.empty $ S.toList acc
+      execute acc (([],q):qs)
+        | S.member q $ finish nfa = True
+        | otherwise               = execute acc qs
+      execute acc ((w,q):qs)  = execute (S.union (followStates (w,q)) acc) qs
+      followStates            = S.unions . S.map follow1State . followEmptyEdges
+      -- follow1State returns all the states reachable by traversing one (non-empty)
+      -- edge from q with w.
+      -- I separate following empty-labeled edges and normal edges, to make sure
+      -- that after an empty-labeled edge got followed, it will not be followed again
+      -- from the same "moment", but only during a "moment" in the future, where the
+      -- moment's is a different one.
+      -- Without this precaution, there are scenarios, where with certain NFA's infinite
+      -- loops of empty-edge-following could appear.
+      follow1State (w,q)      = S.unions
+                              $ S.map (follow1Edge w)
+                              $ S.filter (M.isJust . flip containedPart w . snd . fst)
+                              $ S.filter (not . isEmptyLabel . snd . fst)
+                              $ S.filter ((==q) . fst . fst)
+                              $ delta nfa
+      -- follow1Edge takes a word and an edge and returns all the "moments",
+      -- we could have after traversing this edge with the word.
+      -- For an ELabel of type SymbolRL or WordRL the output is just (w,) mapped to
+      -- the set of the destination states of the edge.
+      -- For an ELabel of type RegEx, there are more possibilities, as one regular
+      -- expression can accepts different words, which also means, that the associated
+      -- edge could be traversed by different words, which would also lead to a more
+      -- diverse set of resulting "moments"
+      follow1Edge w edge      = S.cartesianProduct
+                                (M.fromJust $ leftAfterTraversal (snd $ fst edge) w)
+                                (snd edge)
+      -- addEmptyReachable creates a set with all the (w,q') tuples, where q' is
+      -- reachable from q, by only traversing empty-labeled edges.
+      followEmptyEdges (w,q)  = S.map (w,)
+                              $ getEmptyReachableStates nfa
+                              $ S.singleton q
 
   addWord :: NFA a b -> WordRL -> NFA a b
   addWord nfa = union nfa . word2NFA
@@ -419,6 +517,15 @@ instance RegLang RegEx where
       reDelta = S.map (\((q,l),rs) -> ((q, toRegex l), rs)) $ delta $ simplify nfa
       -- replaceEmptyEdges
 
+-- functionality for converting NFAs to RegEx
+
+-- toGNFA
+--
+-- Converts an NFA into an equivalent NFA with RegEx labels.
+-- The new NFA will only have a single start- and a single acceptance-state.
+-- All states of the new NFA which are neither acceptance nor start state,
+-- will be connected with incoming edges from the start state and with
+-- outgoing edges from the acceptance state.
 toGNFA :: (Integral a, ELabel b) => NFA a b -> NFA a RegEx
 toGNFA nfa = newNFA {states = newStates,
                      delta  = newDelta,
@@ -438,6 +545,28 @@ toGNFA nfa = newNFA {states = newStates,
     toNewFinishEmptySet   = S.map (\q -> ((q,EmptySet),S.singleton 1))
                           $ states newNFA `S.difference` finish newNFA
 
+-- prepareEdges
+--
+-- first    splits all the edges into singleton-valued ones
+-- secondly unifies edges that go from the same states to the same states
+--          into equivalent single edges by using the union of the labels.
+prepareEdges :: (Ord a) => Delta a RegEx -> Delta a RegEx
+prepareEdges = S.map (BF.second S.singleton) . unifyByLabel . splitToSingleDestinaton
+  where
+    splitToSingleDestinaton = S.unions . S.map (\((q,e),rs) -> S.map ((q,e),) rs)
+    unifyByLabel delta
+      | S.null delta = delta
+      | otherwise    = go S.empty [] (tail deltaList) (head deltaList)
+        where
+          deltaList = S.toList delta
+          go newDelta []       []     key = S.insert key newDelta
+          go newDelta (t:ts)   []     key = go (S.insert key newDelta) [] ts t
+          go newDelta rulesAcc (u:us) key
+            | sameFromTo u key = go newDelta rulesAcc us (unify u key)
+            | otherwise        = go newDelta (u:rulesAcc) us key
+            where
+              sameFromTo ((q,_),r) ((q',_),r') = q == q' && r == r'
+              unify      ((q,e),r) ((_,f),_)   = ((q,Union e f),r)
 
 instance RegLang Grammar where
   -- yet to be implemented
@@ -522,6 +651,37 @@ getReachableStates nfa = extendStatesByRule nfa followEdges $ start nfa
                   $ S.filter ((`S.member` states) . fst . fst)
                   $ delta nfa
 
+-- private function, used for a number of other functions
+-- 
+-- Given an NFA, a set of states and a rule that specifies, how to add states to an already existing set of states
+-- The input set of states will be iteratively expanded by this rule until no more new states get added.
+--
+-- Two important notes:
+-- - To avoid an infinite repetition it is vital, that the rule is composed in a way, that
+--   That it's input and output set don't share any members.
+-- - It should be kept in mind, that for each iteration only the set of newly added states
+--   will be the input for the rule of the next iteration. The merging of all the so created
+--   sets does happen later.
+--   This is because it is assumed, that a state does not have anything further to contribute after
+--   it was used once as element of the input state for the rule.
+--   Make sure, that the rule is written in a way that what states are newly derived from it
+--   does only depend on each state of the input set individually.
+extendStatesByRule :: (Ord a) => NFA a b -> (States a -> States a) -> States a -> States a
+extendStatesByRule nfa rule = S.unions . takeWhile (not . S.null) . applyRepeatedly rule
+  where
+    applyRepeatedly f x = x : applyRepeatedly f (f x)
+
+getEmptyReachableStates :: (Ord a, ELabel b) => NFA a b -> States a -> States a
+getEmptyReachableStates nfa = extendStatesByRule nfa followEmptyEdges
+  where
+    followEmptyEdges states = S.difference newStates states
+      where
+        newStates = S.unions
+                  $ S.map snd
+                  $ S.filter (isEmptyLabel . snd . fst)
+                  $ S.filter ((`S.member` states) . fst . fst)
+                  $ delta nfa
+
 ----------------------------------------------------
 -- operations for creating new NFAs from old ones --
 ----------------------------------------------------
@@ -541,23 +701,6 @@ renameStates smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFinis
     newFinish = S.map state2int $ finish nfa
     state2int state = (+smallest) $ fromInteger $ toInteger $ S.findIndex state $ states nfa
     transitionRule2int ((stateArg,symbol),stateSetVal) = ((state2int stateArg,symbol),S.map state2int stateSetVal)
-
--- Takes two NFAs and returns an NFA that recognizes the language which is the union of
--- the languages recognized by the input NFA's.
--- While it could have been possible to make the return value of type NFA (a,b), instead of
--- starting by converting both NFAs to NFA Int.
--- This would have led to much more complicated code, as I could not just have used the union operation
--- to merge the two NFAs.
-unionNFA :: (Ord a, Ord b, Integral c, Ord d) => NFA a d -> NFA b d -> NFA c d
-unionNFA nfa nfb = NFA newStates newSigma newDelta newStart newFinish
-  where
-    newStates = S.union (states nfaInt) (states nfbInt)
-    newSigma  = S.union (sigma  nfaInt) (sigma  nfbInt)
-    newDelta  = S.union (delta  nfaInt) (delta  nfbInt)
-    newStart  = S.union (start  nfaInt) (start  nfbInt)
-    newFinish = S.union (finish nfaInt) (finish nfbInt)
-    nfaInt = renameStates 0 nfa
-    nfbInt = renameStates (fromInteger $ toInteger $ S.size $ states nfa) nfb
 
 
 
@@ -637,105 +780,6 @@ removeStates nfa statesToRemove = nfa {states = newStates,
               $ S.filter ((`S.member` newStates) . fst . fst)
               $ delta nfa
 
--- private function, used for a number of other functions
--- 
--- Given an NFA, a set of states and a rule that specifies, how to add states to an already existing set of states
--- The input set of states will be iteratively expanded by this rule until no more new states get added.
---
--- Two important notes:
--- - To avoid an infinite repetition it is vital, that the rule is composed in a way, that
---   That it's input and output set don't share any members.
--- - It should be kept in mind, that for each iteration only the set of newly added states
---   will be the input for the rule of the next iteration. The merging of all the so created
---   sets does happen later.
---   This is because it is assumed, that a state does not have anything further to contribute after
---   it was used once as element of the input state for the rule.
---   Make sure, that the rule is written in a way that what states are newly derived from it
---   does only depend on each state of the input set individually.
-extendStatesByRule :: (Ord a) => NFA a b -> (States a -> States a) -> States a -> States a
-extendStatesByRule nfa rule = S.unions . takeWhile (not . S.null) . applyRepeatedly rule
-  where
-    applyRepeatedly f x = x : applyRepeatedly f (f x)
-
------------------------------------------------------
--- functions for checking if an NFA accepts a word --
------------------------------------------------------
-
--- acceptsNFA:
--- Verify if a word is accepted by a given NFA
---
--- Returns Nothing if the word does contain symbols which are not in the alphabet of the NFA.
--- Otherwise returns Just True or Just False if the word was accepted or not accepted respectively
---
--- First a list is created, that contains all the start states, attached with the input word to them.
--- Each of these (word,state) tuples, can be understood as one moment during the parallel nondeterministic
--- execution of the NFA.
--- Then this list is iteratively traversed.
--- During each iteration each of these "moments" disappears or creates a number of new "moments",
--- depending on which other states are reachable by what edges.
--- When a "moment" is reached in which the word part is empty, it is returned True,
--- if the associated state is one of the accepted states of the NFA. Otherwise
--- the "moment" gets dropped from the list and won't be considered anymore in the future.
-acceptsNFA :: (Ord a, ELabel b) => NFA a b -> WordRL -> Maybe Bool
-acceptsNFA nfa word
-  | not $ S.isSubsetOf (S.fromList word) (sigma nfa) = Nothing
-  | otherwise = Just 
-              $ execute S.empty
-              $ map (word,)
-              $ S.toList
-              $ start nfa
-  where
-    -- execute handles the iterative traversal of the list of "moments"
-    execute acc []
-      | S.null acc              = False
-      | otherwise               = execute S.empty $ S.toList acc
-    execute acc (([],q):qs)
-      | S.member q $ finish nfa = True
-      | otherwise               = execute acc qs
-    execute acc ((w,q):qs)  = execute (S.union (followStates (w,q)) acc) qs
-    followStates            = S.unions . S.map follow1State . followEmptyEdges
-    -- follow1State returns all the states reachable by traversing one (non-empty)
-    -- edge from q with w.
-    -- I separate following empty-labeled edges and normal edges, to make sure
-    -- that after an empty-labeled edge got followed, it will not be followed again
-    -- from the same "moment", but only during a "moment" in the future, where the
-    -- moment's is a different one.
-    -- Without this precaution, there are scenarios, where with certain NFA's infinite
-    -- loops of empty-edge-following could appear.
-    follow1State (w,q)      = S.unions
-                            $ S.map (follow1Edge w)
-                            $ S.filter (M.isJust . flip containedPart w . snd . fst)
-                            $ S.filter (not . isEmptyLabel . snd . fst)
-                            $ S.filter ((==q) . fst . fst)
-                            $ delta nfa
-    -- follow1Edge takes a word and an edge and returns all the "moments",
-    -- we could have after traversing this edge with the word.
-    -- For an ELabel of type SymbolRL or WordRL the output is just (w,) mapped to
-    -- the set of the destination states of the edge.
-    -- For an ELabel of type RegEx, there are more possibilities, as one regular
-    -- expression can accepts different words, which also means, that the associated
-    -- edge could be traversed by different words, which would also lead to a more
-    -- diverse set of resulting "moments"
-    follow1Edge w edge      = S.cartesianProduct
-                              (M.fromJust $ leftAfterTraversal (snd $ fst edge) w)
-                              (snd edge)
-    -- addEmptyReachable creates a set with all the (w,q') tuples, where q' is
-    -- reachable from q, by only traversing empty-labeled edges.
-    followEmptyEdges (w,q)  = S.map (w,)
-                            $ getEmptyReachableStates nfa
-                            $ S.singleton q
-
-getEmptyReachableStates :: (Ord a, ELabel b) => NFA a b -> States a -> States a
-getEmptyReachableStates nfa = extendStatesByRule nfa followEmptyEdges
-  where
-    followEmptyEdges states = S.difference newStates states
-      where
-        newStates = S.unions
-                  $ S.map snd
-                  $ S.filter (isEmptyLabel . snd . fst)
-                  $ S.filter ((`S.member` states) . fst . fst)
-                  $ delta nfa
-
 -----------------------
 -- Kleene-operations --
 -----------------------
@@ -762,14 +806,14 @@ kleenePlus = tail . kleeneStar
 -- testing and comparing NFAs --
 --------------------------------
 
-acceptSameWord :: (Ord a) => NFA a WordRL -> NFA a WordRL -> WordRL -> Bool
-acceptSameWord nfa nfb word = acceptsNFA nfa word == acceptsNFA nfb word
+acceptSameWord :: (Integral a) => NFA a WordRL -> NFA a WordRL -> WordRL -> Bool
+acceptSameWord nfa nfb word = accepts nfa word == accepts nfb word
 
-recognizeSameLanguage :: (Ord a) => Int -> NFA a WordRL -> NFA a WordRL -> LanguageRL -> Bool
+recognizeSameLanguage :: (Integral a) => Int -> NFA a WordRL -> NFA a WordRL -> LanguageRL -> Bool
 recognizeSameLanguage n nfa nfb = all (acceptSameWord nfa nfb) . take n . S.toList
 
-recognizeLanguageVector :: (Ord a) => Int -> NFA a WordRL -> LanguageRL -> [Maybe Bool]
-recognizeLanguageVector n nfa = take n . map (acceptsNFA nfa) . S.toList
+recognizeLanguageVector :: (Integral a) => Int -> NFA a WordRL -> LanguageRL -> [Maybe Bool]
+recognizeLanguageVector n nfa = take n . map (accepts nfa) . S.toList
 
 ------------------------------
 -- example and testing NFAs --
@@ -791,7 +835,7 @@ abc = makeNFA [0,1] ['a','b','c'] [((0,"abc"),[1])] [0] [1]
 
 abcNoWords = replaceWordEdges abc
 
-unionEndsWith1even1s = endsWith1 `unionNFA` even1s
+unionEndsWith1even1s = endsWith1 `union` even1s
 
 -- notEndsWith1 = complementNFA endsWith1
 
