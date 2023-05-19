@@ -5,9 +5,10 @@ GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/license
 
 # Regulang
 
-I am implementing this small module to help me study regular languages and the theory of computation.
-The goal is to implement different types of representations of regular languages and make it possible to translate between them.
-So far I have implemented some functionality for [nondeterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs), enclosed in the `NFA.hs` file. As well as some functionality for regular expressions.
+I am implementing this module to help me study regular languages and the theory of computation.
+The goal is to implement different types of representations of [regular languages](https://en.wikipedia.org/wiki/Regular_language) and make it possible to translate between them.
+So far I have implemented some functionality for [nondeterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs). As well as some functionality for regular expressions.
+It is possible to convert regular expressions to NFAs implementing the other direction is the taks I am currently working at.
 [Deterministic finite automations](https://en.wikipedia.org/wiki/Deterministic_finite_automaton) (DFAs) are treated as a special case of NFAs, as they mathematically are.
 
 <!--
@@ -40,52 +41,135 @@ that instead of the first condition $r_{0}$ needs to be a member of $S$ and that
 $\forall i 'in \{1,..,n\} \colon r_{i} \in \delta(r_{i-1},w_{i})$, as appropriate to the new range of $\delta$.
 
 The intuition for NFAs defined in this way is as follows:
-Instead of having a *eindeutig* set of instructions, that tells us from which state to change to which other state, when a certain symbol is read, it is possible that reading a symbol allows one to choose between a number of potential follow-up states. In case of $\delta$ mapping to $\emptysey \in P(Q)$ for a given state and symbol, this number can also be $0$. If for a given word, there is at least one choosable path leading from one of the start states to one of the acceptance-states. The word is accepted by the NFA.
+Instead of having a *eindeutig* set of instructions, that tells us from which state to change to which other state, when a certain symbol is read, it is possible that reading a symbol allows one to choose between a number of potential follow-up states. In case of $\delta$ mapping to $\emptyset \in P(Q)$ for a given state and symbol, this number can also be $0$. If for a given word, there is at least one choosable path leading from one of the start states to one of the acceptance-states. The word is accepted by the NFA.
 Another way to look at it is by imagining following different paths through the NFA at once, such that execution does not proceed from states to states, but from a sets of states to sets of states.
 By replacing $\Sigma$ by $\Sigma\*$ in the domain of $\delta$... [to be continued]
 -->
 
-## Implementation
+## Typesynonyms and Dataconstructors
+
+```haskell
+import qualified Data.Set as S
+
+-- general
+type SymbolRL           = Char
+type WordRL             = [SymbolRL]
+emptyWord               = [] :: WordRL
+type AlphabetRL         = S.Set SymbolRL
+type LanguageRL         = S.Set WordRL
+type TransitionRule a b = ((a,b),S.Set a)
+type Delta a b          = S.Set (TransitionRule a b)
+type States a           = S.Set a
+
+-- nondeterministic finite automatioins
+data NFA a b = NFA {states :: States a,
+                    sigma  :: AlphabetRL,
+                    delta  :: Delta a b,
+                    start  :: States a,
+                    finish :: States a}
+
+-- regular expressions
+data RegEx = RE SymbolRL
+           | EmptySet
+           | EmptyWord
+           | Kleene RegEx
+           | Concat RegEx RegEx
+           | Union RegEx RegEx
+```
+
+## Typeclasses and Functions
+
+### The ShowRL Typeclass
+
+```haskell
+class ShowRL a where
+
+  showRL :: a -> String
+  -- Returns a string that can be used for a nicely formatted view of something.
+
+  printRL :: a -> IO ()
+  -- This is like showRL but also prints the string.
+```
+Most types of this module as well as `Set` from `Data.Set` are part of this this class. 
 
 ### The RegLang Typeclass
 
 ```haskell
 class RegLang a where
-  accepts      :: a -> WordRL -> Maybe Bool
-  toList       :: a -> [WordRL]
-  toWordNFA    :: (Integral b) => a -> NFA b WordRL
-  fromWordNFA  :: (Integral b) => NFA b WordRL -> a
-  addWord      :: a -> WordRL -> a
-  union        :: a -> a -> a
+
+  accepts :: a -> WordRL -> Maybe Bool
+  -- Checks if a word is inside of the language represented
+  -- by the argument.
+  -- Returns Nothing if the word contains symbols which
+  -- are not part of the language's alphabet.
+
+  toList :: a -> [WordRL]
+  -- Returns a (possibly infinite) list of the words
+  -- of the represented language.
+
+  fromList :: [WordRL] -> a
+  -- Takes a (finite) list of words and creates an
+  -- according language representation.
+
+  toDFA :: (Integral b) => a -> NFA b SymbolRL
+  -- Returns a DFA (NFA with special properties) that
+  -- represents the same language as the input.
+
+  toWordNFA :: (Integral b) => a -> NFA b WordRL
+  -- Returns an NFA that allows words as labels that
+  -- represents the same language as the input.
+
+  fromNFA :: (Integral b, ELabel c) => NFA b c -> a
+  -- Takes an NFA and returns an equivalent language representation
+  -- of choice.
+
+  addWord :: a -> WordRL -> a
+  -- Extends a language representation in the way, that
+  -- the represented language also contains the provided word.
+
+  union :: a -> a -> a
+  -- Returns the representation of a language, that is the union
+  -- of the languages represented by the input.
+
+  concatenate :: a -> a -> a
+  -- Returns the representation of a language, that is the concatenation
+  -- of the languages represented by the input.
+
+  kleene :: a -> a
+  -- Returns the representation of a language, that one gets,
+  -- when applying the kleene-star to the language represented
+  -- by the input
+
   intersection :: a -> a -> a
-  difference   :: a -> a -> a
-  concat       :: a -> a -> a
-  kleene       :: a -> a
+  -- Returns the representation of a language, that is the intersection
+  -- of the languages represented by the input.
+
+  difference :: a -> a -> a
+  -- Returns the representation of a language, that is the set-difference
+  -- of the languages represented by the input.
+
+  simplify :: a -> a
+  -- tries to change the language representation into an
+  -- equivalent but simpler one.
+  -- What exactly is done depends on the type of representation.
 ```
 
 #### Instances
 
-So far there are three instances of `RegLang`:
+So far there are two instances of `RegLang`. Both are mostly but not fully implemented.
+
 
 ##### NFAs
 ```haskell
 instance (Integral a, ELabel b) => RegLang (NFA a b)
 ```
-Besides `fromList`, `intersection` and `difference` this is fully implemented.
 
-`ELabel` is a class for types that can be used as labels for the edges of an NFA. Instances of `ELabel` are `Symbol RL`, `WordRL` and `RegEx`.
+`ELabel` is a class for types that can be used as labels for the edges of an NFA. Instances of `ELabel` are `SymbolRL`, `WordRL` and `RegEx`. The functions of the `ELabel` typeclass are all private. They are mostly used to support label-agnostic-functionality for functions on NFAs.
 
 ##### regular expressions
 ```haskell
 instance RegLang RegEx
 ```
-Only `addWord`, `kleene`, `concat` and `union` are implemented.
-
-##### grammars
-```haskell
-instance RegLang Grammar
-```
-Nothing implemented yet.
 
 ### NFAs
 
@@ -175,12 +259,6 @@ Takes and NFA and converts it into an equivalent NFA, which has `Int` type state
 This can be useful to "simplify" an NFA by "relabeling" it's states with integers.
 It also can be used to homogenise the type of different NFAs, to prepare for other operations.
 
-##### unionNFA
-```haskell
-unionNFA :: (Ord a, Ord b, Ord c) => NFA a c -> NFA b c -> NFA Int c
-```
-Takes two NFAs and returns an NFA that recognizes the language which is the union of the languages recognized by the input NFAs.
-
 ##### replaceEmptyEdges
 ```haskell
 replaceEmptyEdges :: (Ord a, Ord b, ELabel b) => NFA a b -> NFA a b
@@ -204,23 +282,6 @@ Makes an equivalent NFA, that is described only by edges pointing to singleton s
 removeStates :: (Ord a, Ord b) => NFA a b -> States a -> NFA a b
 ```
 Removes all given states from an NFA, as well as the associated Edges.
-
-##### simplify
-```haskell
-simplify :: (Ord a, Ord b) => NFA a b -> NFA a b
-```
-Removes all states from an NFA that can never be reached or from where no acceptance state can be reached, as well as the associated edges. The resulting NFA is equivalent to the input NFA.
-
-#### Analysing Recognized Languages
-
-##### acceptsNFA
-```haskell
-acceptsNFA :: (Ord a, ELabel b) => NFA a b -> WordRL -> Maybe Bool
-```
-Verify if a word is accepted by a given NFA
-
-Returns `Nothing` if the word does contain symbols which are not in the alphabet of the NFA.
-Otherwise returns `Just True` or `Just False` if the word was accepted or not accepted respectively
 
 #### Kleene-operations
 
