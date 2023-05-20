@@ -318,6 +318,9 @@ instance (Show a) => ShowRL (S.Set a) where
     | otherwise  = "{" ++ show (head elements) ++ concatMap (("," ++) . show) (tail elements) ++ "}"
        where elements = S.toAscList set
 
+-- instance (Show a, ShowRL b) => ShowRL (Delta a b) where
+--   showRL = concatMap showRL . S.toList
+
 instance (Show a, ShowRL b) => ShowRL (TransitionRule a b) where
   showRL ((q,s),qs) = "(" ++ show q ++ ", " ++ showRL s ++ ")\t-> " ++ showRL qs ++ "\n"
 
@@ -527,17 +530,18 @@ instance RegLang RegEx where
   accepts regex = accepts (toWordNFA regex)
 
   simplify :: RegEx -> RegEx
-  simplify (Union  EmptySet r)  = simplify r
-  simplify (Union  r EmptySet)  = simplify r
-  simplify (Union  r r')        = Union (simplify r) (simplify r')
-  simplify (Concat EmptySet r)  = EmptySet
-  simplify (Concat r EmptySet)  = EmptySet
-  simplify (Concat r EmptyWord) = simplify r
-  simplify (Concat EmptyWord r) = simplify r
-  simplify (Concat r r')        = Concat (simplify r) (simplify r')
-  simplify (Kleene EmptySet)    = EmptyWord
-  simplify (Kleene EmptyWord)   = EmptyWord
-  simplify r                    = r
+  simplify (Union  EmptySet r)          = simplify r
+  simplify (Union  r EmptySet)          = simplify r
+  simplify (Union  r r')                = Union (simplify r) (simplify r')
+  simplify (Concat EmptyWord EmptyWord) = EmptyWord
+  simplify (Concat EmptySet r)          = EmptySet
+  simplify (Concat r EmptySet)          = EmptySet
+  simplify (Concat r EmptyWord)         = simplify r
+  simplify (Concat EmptyWord r)         = simplify r
+  simplify (Concat r r')                = Concat (simplify r) (simplify r')
+  simplify (Kleene EmptySet)            = EmptyWord
+  simplify (Kleene EmptyWord)           = EmptyWord
+  simplify r                            = r
 
   fromNFA :: (Integral a, ELabel b) => NFA a b -> RegEx
   fromNFA nfa = regex
@@ -548,6 +552,21 @@ instance RegLang RegEx where
       -- replaceEmptyEdges
 
 -- functionality for converting NFAs to RegEx
+
+toRegEx :: (Integral a, ELabel b) => NFA a b -> RegEx
+toRegEx nfa = getLabel
+            $ head
+            $ S.toList newDelta
+  where
+    tmpNFA   = toGNFA nfa
+    tmpDelta = toSingleDestinatonDelta $ delta tmpNFA
+    statesToRemove = drop 2
+                   $ S.toList
+                   $ states tmpNFA
+    newDelta = go tmpDelta statesToRemove
+      where
+        go d []     = d
+        go d (q:qs) = go (removeStateFromDelta d q) qs
 
 -- toGNFA
 --
@@ -575,28 +594,48 @@ toGNFA nfa = newNFA {states = newStates,
     toNewFinishEmptySet   = S.map (\q -> ((q,EmptySet),S.singleton 1))
                           $ states newNFA `S.difference` finish newNFA
 
--- prepareEdges
---
--- first    splits all the edges into singleton-valued ones
--- secondly unifies edges that go from the same states to the same states
---          into equivalent single edges by using the union of the labels.
-prepareEdges :: (Ord a) => Delta a RegEx -> Delta a RegEx
-prepareEdges = S.map (BF.second S.singleton) . unifyByLabel . splitToSingleDestinaton
+-- second entries of all members of delta need to be singleton sets
+removeStateFromDelta :: (Integral a) => Delta a RegEx -> a -> Delta a RegEx
+removeStateFromDelta delta state = newDelta
   where
-    splitToSingleDestinaton = S.unions . S.map (\((q,e),rs) -> S.map ((q,e),) rs)
-    unifyByLabel delta
-      | S.null delta = delta
-      | otherwise    = go S.empty [] (tail deltaList) (head deltaList)
+    newDelta = S.union newEdges other
+    newEdges = S.map (\(((q,regexQ),_),((_,regexR),r)) -> ((q,Concat regexQ (Concat regexMid regexR)),r))
+             $ from `S.cartesianProduct` to
+    regexMid = foldr Concat EmptyWord
+             $ S.map getLabel fromTo
+    (from,fromTo,to,other) = splitDelta S.empty S.empty S.empty S.empty
+                           $ S.toList delta
+      where
+        splitDelta from fromTo to other [] = (from,fromTo,to,other)
+        splitDelta from fromTo to other (e:es)
+          | p && q    = splitDelta from (S.insert e fromTo) to other es
+          | p         = splitDelta (S.insert e from) fromTo to other es
+          | q         = splitDelta from fromTo (S.insert e to) other es
+          | otherwise = splitDelta from fromTo to (S.insert e other) es
+          where
+            p = state == getFrom e
+            q = state `S.member` getTo e
+
+-- splits all the edges into singleton-valued ones
+toSingleDestinatonDelta :: (Ord a, Ord b) => Delta a b -> Delta a b
+toSingleDestinatonDelta = S.unions . S.map (\((q,e),rs) -> S.map (((q,e),) . S.singleton) rs)
+
+-- unifies edges that go from the same states to the same states
+-- into equivalent single edges by using the union of the labels.
+unifyLabelsDelta :: (Ord a) => Delta a RegEx -> Delta a RegEx
+unifyLabelsDelta delta
+  | S.null delta = delta
+  | otherwise    = go S.empty [] (tail deltaList) (head deltaList)
+    where
+      deltaList = S.toList delta
+      go newDelta []       []     key = S.insert key newDelta
+      go newDelta (t:ts)   []     key = go (S.insert key newDelta) [] ts t
+      go newDelta rulesAcc (u:us) key
+        | sameFromTo u key = go newDelta rulesAcc us (unify u key)
+        | otherwise        = go newDelta (u:rulesAcc) us key
         where
-          deltaList = S.toList delta
-          go newDelta []       []     key = S.insert key newDelta
-          go newDelta (t:ts)   []     key = go (S.insert key newDelta) [] ts t
-          go newDelta rulesAcc (u:us) key
-            | sameFromTo u key = go newDelta rulesAcc us (unify u key)
-            | otherwise        = go newDelta (u:rulesAcc) us key
-            where
-              sameFromTo ((q,_),r) ((q',_),r') = q == q' && r == r'
-              unify      ((q,e),r) ((_,f),_)   = ((q,Union e f),r)
+          sameFromTo ((q,_),r) ((q',_),r') = q == q' && r == r'
+          unify      ((q,e),r) ((_,f),_)   = ((q,Union e f),r)
 
 instance RegLang Grammar where
   -- yet to be implemented
