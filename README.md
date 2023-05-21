@@ -7,9 +7,7 @@ GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/license
 
 I am implementing this module to help me study regular languages and the theory of computation.
 The goal is to implement different types of representations of [regular languages](https://en.wikipedia.org/wiki/Regular_language) and make it possible to translate between them.
-So far I have implemented some functionality for [nondeterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs). As well as some functionality for regular expressions.
-It is possible to convert regular expressions to NFAs implementing the other direction is the taks I am currently working at.
-[Deterministic finite automations](https://en.wikipedia.org/wiki/Deterministic_finite_automaton) (DFAs) are treated as a special case of NFAs, as they mathematically are.
+So far I have implemented some functionality for [nondeterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs) and regular expressions. It is also possible to convert between these two using the `fromNFA` and `toWordNFA` functions.
 
 <!--
 ## Theory

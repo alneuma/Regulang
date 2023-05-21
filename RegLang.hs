@@ -131,7 +131,7 @@ getLabel ((_,a),_) = a
 -- RegEx
 
 class (Ord a) => ELabel a where
-  toRegex            :: a -> RegEx
+  label2RegEx            :: a -> RegEx
   -- returns a regex, that describes exactly the provided ELabel
   containedPart      :: a -> WordRL -> Maybe (WordRL,WordRL)
   -- Splits a word into the part at the beginning which is contained in a label
@@ -160,8 +160,8 @@ class (Ord a) => ELabel a where
   -- This is trivial for WordRL and RegEx but complicated for SymbolRL
 
 instance ELabel SymbolRL where
-  toRegex :: SymbolRL -> RegEx
-  toRegex = RE
+  label2RegEx :: SymbolRL -> RegEx
+  label2RegEx = RE
 
   containedPart :: SymbolRL -> WordRL -> Maybe (WordRL,WordRL)
   containedPart _ [] = Nothing
@@ -199,9 +199,9 @@ instance ELabel SymbolRL where
                $ delta nfa
 
 instance ELabel WordRL where
-  toRegex :: WordRL -> RegEx
-  toRegex []   = EmptyWord
-  toRegex word = foldr1 Concat $ map RE word
+  label2RegEx :: WordRL -> RegEx
+  label2RegEx []   = EmptyWord
+  label2RegEx word = foldr1 Concat $ map RE word
 
   containedPart :: WordRL -> WordRL -> Maybe (WordRL,WordRL)
   containedPart label word
@@ -240,8 +240,8 @@ instance ELabel WordRL where
       newDelta  = S.insert ((q,""),S.singleton q') $ delta nfa
 
 instance ELabel RegEx where
-  toRegex :: RegEx -> RegEx
-  toRegex = id
+  label2RegEx :: RegEx -> RegEx
+  label2RegEx = id
   -- containedPart :: RegEx -> WordRL -> Bool
   -- containedPart = undefined
   -- leftAfterTraversal :: RegEx -> WordRL -> Maybe (S.Set WordRL)
@@ -268,7 +268,7 @@ instance ELabel RegEx where
   getAlphabet (Union  r r') = S.union (getAlphabet r) (getAlphabet r')
 
   word2NFA :: (Integral b) => WordRL -> NFA b RegEx
-  word2NFA word = makeNFA [0,1] (S.toList $ getAlphabet word) [((0,toRegex word),[1])] [0] [1]
+  word2NFA word = makeNFA [0,1] (S.toList $ getAlphabet word) [((0,label2RegEx word),[1])] [0] [1]
 
   insertEmptyEdge :: (Ord b) => NFA b RegEx -> b -> b -> NFA b RegEx
   insertEmptyEdge nfa q q' = nfa {states = newStates,
@@ -320,6 +320,12 @@ instance (Show a) => ShowRL (S.Set a) where
 
 -- instance (Show a, ShowRL b) => ShowRL (Delta a b) where
 --   showRL = concatMap showRL . S.toList
+
+printDelta :: (Show a, ShowRL b) => Delta a b -> IO ()
+printDelta = putStrLn . showDelta
+
+showDelta :: (Show a, ShowRL b) => Delta a b -> String
+showDelta = concatMap showRL . S.toList
 
 instance (Show a, ShowRL b) => ShowRL (TransitionRule a b) where
   showRL ((q,s),qs) = "(" ++ show q ++ ", " ++ showRL s ++ ")\t-> " ++ showRL qs ++ "\n"
@@ -495,7 +501,7 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
 
 instance RegLang RegEx where
   addWord :: RegEx -> WordRL -> RegEx
-  addWord regex = Union regex . toRegex
+  addWord regex = Union regex . label2RegEx
 
   union :: RegEx -> RegEx -> RegEx
   union = Union
@@ -530,43 +536,31 @@ instance RegLang RegEx where
   accepts regex = accepts (toWordNFA regex)
 
   simplify :: RegEx -> RegEx
-  simplify (Union  EmptySet r)          = simplify r
-  simplify (Union  r EmptySet)          = simplify r
-  simplify (Union  r r')                = Union (simplify r) (simplify r')
-  simplify (Concat EmptyWord EmptyWord) = EmptyWord
-  simplify (Concat EmptySet r)          = EmptySet
-  simplify (Concat r EmptySet)          = EmptySet
-  simplify (Concat r EmptyWord)         = simplify r
-  simplify (Concat EmptyWord r)         = simplify r
-  simplify (Concat r r')                = Concat (simplify r) (simplify r')
-  simplify (Kleene EmptySet)            = EmptyWord
-  simplify (Kleene EmptyWord)           = EmptyWord
-  simplify r                            = r
+  simplify x@(RE _)             = x
+  simplify EmptySet             = EmptySet
+  simplify EmptyWord            = EmptyWord
+  simplify (Union r r')         = simplifyRegExLight (Union (simplify r) (simplify r'))
+  simplify (Kleene x@(RE _))    = Kleene x
+  simplify (Kleene r)           = simplifyRegExLight (Kleene $ simplify r)
+  simplify (Concat r EmptyWord) = simplify r
+  simplify (Concat EmptyWord r) = simplify r
+  simplify (Concat r r')        = simplifyRegExLight (Concat (simplify r) (simplify r'))
 
   fromNFA :: (Integral a, ELabel b) => NFA a b -> RegEx
-  fromNFA nfa = regex
+  fromNFA nfa = getLabel
+              $ head
+              $ S.toList
+              $ unifyLabelsDelta newDelta
     where
-      regex = undefined
-      reNFA = (simplify nfa) {delta = reDelta}
-      reDelta = S.map (\((q,l),rs) -> ((q, toRegex l), rs)) $ delta $ simplify nfa
-      -- replaceEmptyEdges
-
--- functionality for converting NFAs to RegEx
-
-toRegEx :: (Integral a, ELabel b) => NFA a b -> RegEx
-toRegEx nfa = getLabel
-            $ head
-            $ S.toList newDelta
-  where
-    tmpNFA   = toGNFA nfa
-    tmpDelta = toSingleDestinatonDelta $ delta tmpNFA
-    statesToRemove = drop 2
-                   $ S.toList
-                   $ states tmpNFA
-    newDelta = go tmpDelta statesToRemove
-      where
-        go d []     = d
-        go d (q:qs) = go (removeStateFromDelta d q) qs
+      tmpNFA   = toGNFA $ simplify $ replaceEmptyEdges nfa
+      tmpDelta = toSingleDestinatonDelta $ delta tmpNFA
+      statesToRemove = drop 2
+                     $ S.toList
+                     $ states tmpNFA
+      newDelta = go tmpDelta statesToRemove
+        where
+          go d []     = d
+          go d (q:qs) = go (removeStateFromDelta d q) qs
 
 -- toGNFA
 --
@@ -581,12 +575,17 @@ toGNFA nfa = newNFA {states = newStates,
                      start  = newStart,
                      finish = newFinish}
   where
-    newNFA    = from2NFA {delta = S.map (\((q,a),r) -> ((q,toRegex a),r)) $ delta from2NFA}
+    newNFA    = from2NFA {delta = S.map (\((q,a),r) -> ((q,label2RegEx a),r)) $ delta from2NFA}
     from2NFA  = renameStates 2 nfa
     newStates = S.union (S.fromList [0,1]) (states newNFA)
     newStart  = S.singleton 0
     newFinish = S.singleton 1
-    newDelta  = S.unions [delta newNFA, fromNewStartEmptyWord, fromNewStartEmptySet, toNewFinishEmptyWord, toNewFinishEmptySet]
+    newDelta  = toSingleDestinatonDelta
+              $ S.unions [delta newNFA,
+                          fromNewStartEmptyWord,
+                          fromNewStartEmptySet,
+                          toNewFinishEmptyWord,
+                          toNewFinishEmptySet]
     fromNewStartEmptyWord = S.singleton ((0,EmptyWord),start newNFA)
     fromNewStartEmptySet  = S.singleton ((0,EmptySet), states newNFA `S.difference` start newNFA)
     toNewFinishEmptyWord  = S.map (\q -> ((q,EmptyWord),S.singleton 1))
@@ -600,18 +599,19 @@ removeStateFromDelta delta state = newDelta
   where
     newDelta = S.union newEdges other
     newEdges = S.map (\(((q,regexQ),_),((_,regexR),r)) -> ((q,Concat regexQ (Concat regexMid regexR)),r))
-             $ from `S.cartesianProduct` to
-    regexMid = foldr Concat EmptyWord
-             $ S.map getLabel fromTo
-    (from,fromTo,to,other) = splitDelta S.empty S.empty S.empty S.empty
+             $ to `S.cartesianProduct` from
+    regexMid = simplify
+             $ foldr Concat EmptyWord
+             $ S.map getLabel toFrom
+    (to,toFrom,from,other) = splitDelta S.empty S.empty S.empty S.empty
                            $ S.toList delta
       where
-        splitDelta from fromTo to other [] = (from,fromTo,to,other)
-        splitDelta from fromTo to other (e:es)
-          | p && q    = splitDelta from (S.insert e fromTo) to other es
-          | p         = splitDelta (S.insert e from) fromTo to other es
-          | q         = splitDelta from fromTo (S.insert e to) other es
-          | otherwise = splitDelta from fromTo to (S.insert e other) es
+        splitDelta to toFrom from other [] = (to,toFrom,from,other)
+        splitDelta to toFrom from other (e:es)
+          | p && q    = splitDelta to (S.insert e toFrom) from other es
+          | q         = splitDelta (S.insert e to) toFrom from other es
+          | p         = splitDelta to toFrom (S.insert e from) other es
+          | otherwise = splitDelta to toFrom from (S.insert e other) es
           where
             p = state == getFrom e
             q = state `S.member` getTo e
@@ -636,6 +636,16 @@ unifyLabelsDelta delta
         where
           sameFromTo ((q,_),r) ((q',_),r') = q == q' && r == r'
           unify      ((q,e),r) ((_,f),_)   = ((q,Union e f),r)
+
+-- helper-function for simplify (RegEx)
+simplifyRegExLight :: RegEx -> RegEx
+simplifyRegExLight (Kleene EmptySet) = EmptyWord
+simplifyRegExLight (Kleene EmptyWord) = EmptyWord
+simplifyRegExLight (Union EmptySet r) = simplify r
+simplifyRegExLight (Union r EmptySet) = simplify r
+simplifyRegExLight (Concat EmptySet r) = EmptySet
+simplifyRegExLight (Concat r EmptySet) = EmptySet
+simplifyRegExLight r = r
 
 instance RegLang Grammar where
   -- yet to be implemented
