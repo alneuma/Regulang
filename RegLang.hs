@@ -61,7 +61,7 @@ type Delta a b          = S.Set (TransitionRule a b)
 type States a           = S.Set a
 
 -- NFAs
--- (nondeterministic finite automations)
+-- (nondeterministic finite automatons)
 --
 -- a is the type that is used to label the states of the NFA
 -- Usually we want (Ord a).
@@ -387,7 +387,7 @@ class RegLang a where
   -- Returns the representation of a language, that is the set-difference
   -- of the languages represented by the input.
   simplify     :: a -> a
-  -- tries to change the language representation into an
+  -- tries to change the language's representation into an
   -- equivalent but simpler one.
   -- What exactly is done depends on the type of representation.
 
@@ -649,6 +649,66 @@ simplifyRegExLight r = r
 
 instance RegLang Grammar where
   -- yet to be implemented
+
+-------------
+-------------
+---- DFA ----
+-------------
+-------------
+
+-- Takes a DFA and groups it's states into equivalence-classes.
+-- Can be used as the first step in creating a minimal automaton
+eqClassesDFA :: (Integral a) => NFA a SymbolRL -> [[a]]
+eqClassesDFA dfa
+  | S.null (finish dfa)     = [S.toList $ states dfa]
+  | S.null finishComplement = [S.toList $ states dfa]
+  | otherwise               = findEqClasses 2
+                                            dfa
+                                            [S.toList finishComplement, S.toList $ finish dfa]
+                                            (map (:[]) $ S.toList $ sigma dfa)
+    where
+      finishComplement = states dfa `S.difference` finish dfa
+
+findEqClasses :: (Integral a) => Int -> NFA a SymbolRL -> [[a]] -> [WordRL] -> [[a]]
+findEqClasses numClasses dfa classes words
+  | numClasses == newNumClasses = newClasses
+  | otherwise                   = findEqClasses newNumClasses
+                                                dfa
+                                                newClasses
+                                                ((:) <$> S.toList (sigma dfa) <*> words)
+  where
+    newNumClasses = length newClasses
+    tmpClasses    = addPatterns dfa classes words
+    newClasses    = refineAllEqClasses tmpClasses
+
+refineAllEqClasses :: (Integral a) => [[(a,[Bool])]] -> [[a]]
+refineAllEqClasses [] = []
+refineAllEqClasses classes@(xs:xss)
+  | null xs              = []
+  | null (snd $ head xs) = map (map fst) classes
+  | otherwise            = refineAllEqClasses $ concatMap refineEqClass classes
+
+refineEqClass :: (Integral a) => [(a,[Bool])] -> [[(a,[Bool])]]
+refineEqClass []                 = []
+refineEqClass eqClass@((_,[]):_) = [eqClass]
+refineEqClass eqClass = go [] [] eqClass
+  where
+    go true false [] = [true,false]
+    go true false ((q,b:bs):xs)
+      | b         = go ((q,bs):true) false xs
+      | otherwise = go true ((q,bs):false) xs
+
+addPatterns :: (Integral a) => NFA a SymbolRL -> [[a]] -> [WordRL] -> [[(a,[Bool])]]
+addPatterns dfa classes words = map (map (getPattern dfa words)) classes
+  where
+    getPattern d w s = (s,pattern)
+      where
+        pattern = map (M.fromJust . stateAccepts d s) w
+
+stateAccepts :: (Integral a, ELabel b) => NFA a b -> a -> WordRL -> Maybe Bool
+stateAccepts nfa state = accepts modifiedNFA
+  where
+    modifiedNFA = nfa {start = S.singleton state}
 
 -------------
 -------------

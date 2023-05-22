@@ -7,14 +7,14 @@ GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/license
 
 I am implementing this module to help me study regular languages and the theory of computation.
 The goal is to implement different types of representations of [regular languages](https://en.wikipedia.org/wiki/Regular_language) and make it possible to translate between them.
-So far I have implemented some functionality for [nondeterministic finite automations](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs) and regular expressions. It is also possible to convert between these two using the `fromNFA` and `toWordNFA` functions.
+So far I have implemented some functionality for [nondeterministic finite automatons](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs) and regular expressions. It is also possible to convert between these two using the `fromNFA` and `toWordNFA` functions.
 
 <!--
 ## Theory
 
 ### Deterministic Finite Automations
 
-When a word is a finite sequence of symbols, then a *regular language* is a set of words, that can be fully described by a *deterministic finite automation* (DFA). These automations can be imagined as a set of states (nodes) and a number of transition rules (edges) which, given a state, determine to which next state to progress when reading a specific symbol as part of a word.
+When a word is a finite sequence of symbols, then a *regular language* is a set of words, that can be fully described by a *deterministic finite automaton* (DFA). These automatons can be imagined as a set of states (nodes) and a number of transition rules (edges) which, given a state, determine to which next state to progress when reading a specific symbol as part of a word.
 Each DFA has exactly one start-state and can have zero or more acceptance-states. When by reading a word symbol by symbol we can traverse the DFA from the start-state to one of the acceptance-states, we say that the DFA accepts the word, or that the word is part of the language described by the DFA.
 
 DFAs are mathematically formalised as five-tuples $(Q,\Sigma,\delta,q_{0},F)$, where $Q$ is the set of states, $\Sigma$ is the alphabet of allowed symbols, $\delta \colon Q \times \Sigma \to Q$ is the transition function (or set of edges), $q_{0} \in Q$ is the start state and $F \subset Q$ are the acceptance-states.
@@ -28,7 +28,7 @@ A word $w = w_{1}..w_{n}$ with $w_{i} \in \Sigma$ for all $i \in \{1,..,n\}$ is 
 
 ### Nondeterministic Finite Automations
 
-For *Nondeterministic Finite Automations* (NFAs) there are different definitions, varying in their degree of generality i.e. by what kinds of construct they allow. Still they are all equal in the sense, that every less general version can be interpreted as a special case of one of the more general versions and that any NFA that satisfies one of the more general definitions can be translated into an equivalent NFA stasfying one of the narrower definitions. Finally also every DFA, can be seen interpreted as just special kind of NFA and there exists an algorithm by which any NFA can be transformed into an equivalent DFA. That two finite automations are equivalent means here, that they accept the same language.
+For *Nondeterministic Finite Automations* (NFAs) there are different definitions, varying in their degree of generality i.e. by what kinds of construct they allow. Still they are all equal in the sense, that every less general version can be interpreted as a special case of one of the more general versions and that any NFA that satisfies one of the more general definitions can be translated into an equivalent NFA stasfying one of the narrower definitions. Finally also every DFA, can be seen interpreted as just special kind of NFA and there exists an algorithm by which any NFA can be transformed into an equivalent DFA. That two finite automatons are equivalent means here, that they accept the same language.
 
 For this module I chose to implement one of the more general definitions of NFAs as a default. While it's formalization is mostly equal to the one of the DFA. There are a couple of important differences.
 
@@ -147,7 +147,7 @@ class RegLang a where
   -- of the languages represented by the input.
 
   simplify :: a -> a
-  -- tries to change the language representation into an
+  -- tries to change the language's representation into an
   -- equivalent but simpler one.
   -- What exactly is done depends on the type of representation.
 ```
