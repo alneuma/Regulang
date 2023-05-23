@@ -138,7 +138,7 @@ class (Ord a) => ELabel a where
   -- and the rest.
   -- Returns Nothing if the label does not accept the word.
   -- Attention:
-  -- Always returns Nothing when the word is empty, even when the label is the empty label.
+  -- Always returns Nothing when the word or the label is empty.
   leftAfterTraversal :: a -> WordRL -> Maybe (S.Set WordRL)
   -- Returns Nothing if edge can not be legally traversed with this
   -- word otherwise returns Just the set of all possible remaining
@@ -158,6 +158,11 @@ class (Ord a) => ELabel a where
   -- to the second one.
   -- Creates the states if they are not yet in the nfa.
   -- This is trivial for WordRL and RegEx but complicated for SymbolRL
+  replaceWordEdge    :: (Integral b) => NFA b a -> TransitionRule b a -> NFA b a
+  -- If the second argument is in the delta of the first argument
+  -- and if it has not a singleton-label or an empty-label, it gets removed,
+  -- and new states and singleton-label-transition-rules get inserted
+  -- into the nfa, to create an equivalent nfa.
 
 instance ELabel SymbolRL where
   label2RegEx :: SymbolRL -> RegEx
@@ -198,13 +203,18 @@ instance ELabel SymbolRL where
                $ S.filter ((==q') . getFrom)
                $ delta nfa
 
+  replaceWordEdge :: (Integral a) => NFA a SymbolRL -> TransitionRule a SymbolRL -> NFA a SymbolRL
+  replaceWordEdge nfa _ = nfa
+
 instance ELabel WordRL where
   label2RegEx :: WordRL -> RegEx
   label2RegEx []   = EmptyWord
   label2RegEx word = foldr1 Concat $ map RE word
 
   containedPart :: WordRL -> WordRL -> Maybe (WordRL,WordRL)
+  containedPart _     emptyWord = Nothing
   containedPart label word
+    | isEmptyLabel label            = Nothing
     | lengthMatching == lengthLabel = Just (label,drop lengthLabel word)
     | otherwise                     = Nothing
     where
@@ -239,13 +249,51 @@ instance ELabel WordRL where
       newStates = S.insert q $ S.insert q' $ states nfa
       newDelta  = S.insert ((q,""),S.singleton q') $ delta nfa
 
+  replaceWordEdge :: (Integral a) => NFA a WordRL -> TransitionRule a WordRL -> NFA a WordRL
+  replaceWordEdge nfa edge
+    | lengthEdgeLabel <= 1            = nfa
+    | not $ S.member edge (delta nfa) = nfa
+    | otherwise                       = nfa {states = newStates,
+                                             delta  = newDelta}
+      where
+        lengthEdgeLabel = fromInteger $ toInteger $ length $ getLabel edge
+        newStatesStart  = 1 + S.findMax (states nfa)
+        newStates  = S.fromList [newStatesStart..newStatesStart + lengthEdgeLabel]
+        newDelta   = S.union addedDelta
+                   $ S.delete edge
+                   $ delta nfa
+        addedDelta = S.fromList
+                   $ makeNewEdges [((getFrom edge, [head $ getLabel edge]),S.singleton newStatesStart)]
+                                  (newStatesStart + 1)
+                                  (tail $ getLabel edge)
+        makeNewEdges accEdges n [w]    = ((n-1,[w]),getTo edge) : accEdges
+        makeNewEdges accEdges n (w:ws) = makeNewEdges (((n-1,[w]),S.singleton n) : accEdges) (n+1) ws
+                                  
 instance ELabel RegEx where
   label2RegEx :: RegEx -> RegEx
   label2RegEx = id
-  -- containedPart :: RegEx -> WordRL -> Bool
-  -- containedPart = undefined
-  -- leftAfterTraversal :: RegEx -> WordRL -> Maybe (S.Set WordRL)
-  -- leftAfterTraversal = undefined
+
+  containedPart :: RegEx -> WordRL -> Maybe (WordRL,WordRL)
+  containedPart _     emptyWord = Nothing
+  containedPart EmptyWord _     = Nothing
+  containedPart EmptySet  _     = Nothing
+  containedPart regex word = go regex [head word] (tail word)
+    where
+      go re acc []
+        | test == Just True = Just (toTest,[])
+        | otherwise         = Nothing
+        where
+          test   = accepts re toTest
+          toTest = reverse acc
+      go re acc remainingWord@(w:ws)
+        | test == Just True = Just (toTest,remainingWord)
+        | otherwise         = go re (w:acc) ws
+        where
+          test   = accepts re toTest
+          toTest = reverse acc
+
+  leftAfterTraversal :: RegEx -> WordRL -> Maybe (S.Set WordRL)
+  leftAfterTraversal = undefined
 
   isSingletonLabel :: RegEx -> Bool
   isSingletonLabel (RE _) = True
@@ -398,6 +446,11 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
   toList :: (Integral a, ELabel b) => NFA a b -> [WordRL]
   toList nfa = filter ((== Just True) . accepts nfa) (kleeneStar $ sigma nfa)
 
+--  toDFA :: (Integral a, ELabel b, Integral c) => NFA a b -> NFA c SymbolRL
+--  toDFA nfa = undefined
+--    where
+--      tmpNFA = replaceEmptyEdges $ replaceWordEdges $ simplify nfa
+
   union :: (Integral a, ELabel b) => NFA a b -> NFA a b -> NFA a b
   union nfa nfb = NFA newStates newSigma newDelta newStart newFinish
     where
@@ -447,9 +500,9 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
       -- loops of empty-edge-following could appear.
       follow1State (w,q)      = S.unions
                               $ S.map (follow1Edge w)
-                              $ S.filter (M.isJust . flip containedPart w . snd . fst)
-                              $ S.filter (not . isEmptyLabel . snd . fst)
-                              $ S.filter ((==q) . fst . fst)
+                              $ S.filter (M.isJust . flip containedPart w . getLabel)
+                              $ S.filter (not . isEmptyLabel getLabel)
+                              $ S.filter ((==q) . getFrom)
                               $ delta nfa
       -- follow1Edge takes a word and an edge and returns all the "moments",
       -- we could have after traversing this edge with the word.
@@ -460,8 +513,8 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
       -- edge could be traversed by different words, which would also lead to a more
       -- diverse set of resulting "moments"
       follow1Edge w edge      = S.cartesianProduct
-                                (M.fromJust $ leftAfterTraversal (snd $ fst edge) w)
-                                (snd edge)
+                                (M.fromJust $ leftAfterTraversal (getLabel edge) w)
+                                (getTo edge)
       -- addEmptyReachable creates a set with all the (w,q') tuples, where q' is
       -- reachable from q, by only traversing empty-labeled edges.
       followEmptyEdges (w,q)  = S.map (w,)
@@ -647,7 +700,7 @@ simplifyRegExLight (Concat EmptySet r) = EmptySet
 simplifyRegExLight (Concat r EmptySet) = EmptySet
 simplifyRegExLight r = r
 
-instance RegLang Grammar where
+--instance RegLang Grammar where
   -- yet to be implemented
 
 -------------
@@ -994,3 +1047,4 @@ test_1 = toWordNFA (RE '1')
 conc01 = test_0 `concatenate` test_1
 test_emptySet = toWordNFA EmptySet
 test_emptyWord = toWordNFA EmptyWord
+
