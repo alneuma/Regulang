@@ -149,6 +149,8 @@ class (Ord a) => ELabel a where
   -- True if the label only contains a single symbol
   isEmptyLabel       :: a -> Bool
   -- True if the label contains the empty word
+  singletonToSymbol  :: a -> Maybe SymbolRL
+  -- if is no singleton: Nothing
   getAlphabet        :: a -> AlphabetRL
   -- Gets the alphabet used by a label
   word2NFA           :: (Integral b) => WordRL -> NFA b a
@@ -182,6 +184,9 @@ instance ELabel SymbolRL where
 
   isSingletonLabel :: SymbolRL -> Bool
   isSingletonLabel _ = True
+
+  singletonToSymbol :: SymbolRL -> Maybe SymbolRL
+  singletonToSymbol x = Just x
 
   isEmptyLabel :: SymbolRL -> Bool
   isEmptyLabel _ = False
@@ -232,6 +237,10 @@ instance ELabel WordRL where
 
   isSingletonLabel :: WordRL -> Bool
   isSingletonLabel word = length word == 1
+
+  singletonToSymbol :: WordRL -> Maybe SymbolRL
+  singletonToSymbol [w] = Just w
+  singletonToSymbol _   = Nothing
 
   isEmptyLabel :: WordRL -> Bool
   isEmptyLabel = (==) emptyWord
@@ -298,6 +307,10 @@ instance ELabel RegEx where
   isSingletonLabel :: RegEx -> Bool
   isSingletonLabel (RE _) = True
   isSingletonLabel _      = False
+
+  singletonToSymbol :: RegEx -> Maybe SymbolRL
+  singletonToSymbol (RE x) = Just x
+  singletonToSymbol _      = Nothing
 
   isEmptyLabel :: RegEx -> Bool
   isEmptyLabel (RE _)        = False
@@ -447,9 +460,46 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
   toList nfa = filter ((== Just True) . accepts nfa) (kleeneStar $ sigma nfa)
 
   toDFA :: (Integral a, ELabel b, Integral c) => NFA a b -> NFA c SymbolRL
-  toDFA nfa = undefined
+  toDFA nfa = customRename 0 $ NFA tmpStates tmpSigma tmpDelta tmpStart tmpFinish
     where
-      tmpNFA = replaceEmptyEdges $ replaceWordEdges $ simplify nfa
+      customRename smallest nfa = NFA newStates (sigma nfa) newDelta newStart newFinish
+        where
+          newStates = S.fromList $ zipWith const [smallest..] $ S.toAscList $ states nfa
+          newDelta  = S.map transitionRule2int $ delta nfa
+          newStart  = S.map state2int $ start nfa
+          newFinish = S.map state2int $ finish nfa
+          state2int state = (+smallest) $ fromInteger $ toInteger $ S.findIndex state $ states nfa
+          transitionRule2int ((stateArg,symbol),stateSetVal) = ((state2int stateArg,symbol),S.map state2int stateSetVal)
+      tmpStates = S.map fst dfaAsSet
+      tmpSigma  = sigma tmpNFA
+      tmpDelta  = S.unions
+                $ S.map (\(q,e) -> S.map (\(l,t) -> ((q,l),S.singleton t)) e) dfaAsSet
+      tmpStart  = S.singleton $ start tmpNFA
+      tmpFinish = S.filter (not . S.null . S.intersection (finish tmpNFA))
+                $ S.map fst dfaAsSet
+      listSigma = S.toList $ sigma nfa
+      tmp0NFA = replaceEmptyEdges $ replaceWordEdges $ simplify nfa
+      tmpNFA  = tmp0NFA {delta = S.map (\((q,l),rs) -> ((q,M.fromJust $ singletonToSymbol l),rs))
+                               $ delta tmp0NFA}
+      dfaAsSet :: S.Set (S.Set a, S.Set (SymbolRL,S.Set a))
+      dfaAsSet = go S.empty (S.singleton $ start tmpNFA)
+      go processed unprocessed
+        | S.null unprocessed = processed
+        | otherwise          = go (S.insert newRules processed)
+                                  ((newStates `S.difference` S.map fst processed)
+                                    `S.union` newUnprocessed)
+        where
+          (setToProcess,newUnprocessed) = S.deleteFindMin unprocessed
+          (newRules,newStates) = go2 setToProcess
+          go2 set = ((set,edges),stateSets)
+            where
+              edges = S.map (\sy -> (sy,followEdges set sy)) $ sigma tmpNFA
+              stateSets = S.map snd edges
+              followEdges s sym = S.unions
+                                $ S.map getTo
+                                $ S.filter ((==sym) . getLabel)
+                                $ S.filter ((`S.member` s) . getFrom)
+                                $ delta tmpNFA
 
   union :: (Integral a, ELabel b) => NFA a b -> NFA a b -> NFA a b
   union nfa nfb = NFA newStates newSigma newDelta newStart newFinish
@@ -1032,4 +1082,5 @@ test_1 = toWordNFA (RE '1')
 conc01 = test_0 `concatenate` test_1
 test_emptySet = toWordNFA EmptySet
 test_emptyWord = toWordNFA EmptyWord
+
 
