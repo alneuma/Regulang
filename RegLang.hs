@@ -220,7 +220,7 @@ instance ELabel WordRL where
     where
       lengthLabel    = length label
       lengthMatching = length
-                     $ takeWhile (== True)
+                     $ takeWhile id
                      $ zipWith (==) label word
 
   leftAfterTraversal :: WordRL -> WordRL -> Maybe (S.Set WordRL)
@@ -446,10 +446,10 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
   toList :: (Integral a, ELabel b) => NFA a b -> [WordRL]
   toList nfa = filter ((== Just True) . accepts nfa) (kleeneStar $ sigma nfa)
 
---  toDFA :: (Integral a, ELabel b, Integral c) => NFA a b -> NFA c SymbolRL
---  toDFA nfa = undefined
---    where
---      tmpNFA = replaceEmptyEdges $ replaceWordEdges $ simplify nfa
+  toDFA :: (Integral a, ELabel b, Integral c) => NFA a b -> NFA c SymbolRL
+  toDFA nfa = undefined
+    where
+      tmpNFA = replaceEmptyEdges $ replaceWordEdges $ simplify nfa
 
   union :: (Integral a, ELabel b) => NFA a b -> NFA a b -> NFA a b
   union nfa nfb = NFA newStates newSigma newDelta newStart newFinish
@@ -501,7 +501,7 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
       follow1State (w,q)      = S.unions
                               $ S.map (follow1Edge w)
                               $ S.filter (M.isJust . flip containedPart w . getLabel)
-                              $ S.filter (not . isEmptyLabel getLabel)
+                              $ S.filter (not . isEmptyLabel . getLabel)
                               $ S.filter ((==q) . getFrom)
                               $ delta nfa
       -- follow1Edge takes a word and an edge and returns all the "moments",
@@ -923,27 +923,12 @@ replaceEmptyEdges nfa = nfa {delta = newDelta, start = newStart}
 --
 -- Replaces all the edges of an NFA that are labeled with words of length > 1, 
 -- in a way, that produces an equivalent NFA, that does not have such edges.
---
--- Before the the rest of the calculation, we convert the NFA into an NFA
--- with Int states, as this makes it easier to handle the creation of new states,
--- which is necessary for this function.
---
-replaceWordEdges :: (Ord a) => NFA a WordRL -> NFA Int WordRL
-replaceWordEdges nfa = tmpNFA {states = newStates, delta = newDelta}
+replaceWordEdges :: (Integral a, ELabel b) => NFA a b -> NFA a b
+replaceWordEdges nfa = go nfa deltaList
   where
-    tmpNFA               = renameStates 0 nfa
-    tmpDelta             = S.difference (delta tmpNFA) wordEdges
-    wordEdges            = S.filter ((1<) . length . snd . fst) $ delta tmpNFA
-    (newStates,newDelta) = go (S.size $ states tmpNFA) (states tmpNFA) tmpDelta $ S.toList wordEdges
-    go count states delta []     = (states,delta)
-    go count states delta (e:es) = go count' states' delta' es
-      where
-        count'      = (+) count $ length $ snd $ fst e
-        states'     = S.union states $ S.fromList addedStates
-        delta'      = S.union delta $ S.fromList addedEdges
-        addedStates = [count..count'-2]
-        addedEdges  = zip (zip (fst (fst e) : addedStates) (map (:[]) $ snd $ fst e))
-                          (map S.singleton addedStates ++ [snd e])
+    go nfb []     = nfb
+    go nfb (e:es) = go (replaceWordEdge nfb e) es
+    deltaList     = S.toList $ delta nfa
 
 -- replaceSetValuedEdges
 --
