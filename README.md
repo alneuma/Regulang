@@ -5,9 +5,9 @@ GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/license
 
 # Regulang
 
-I am implementing this module to help me study regular languages and the theory of computation.
+I am implementing this set of modules to help me study regular languages and the theory of computation.
 The goal is to implement different types of representations of [regular languages](https://en.wikipedia.org/wiki/Regular_language) and make it possible to translate between them.
-So far I have implemented some functionality for [nondeterministic finite automatons](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs) and regular expressions. It is also possible to convert between these two using the `fromNFA` and `toWordNFA` functions.
+So far I have implemented some functionality for [nondeterministic finite automatons](https://en.wikipedia.org/wiki/Nondeterministic_finite_automaton) (NFAs) and regular expressions.
 
 <!--
 ## Theory
@@ -193,6 +193,7 @@ NFAs that accept regular expressions as labels for their edges.
 
 So far `SymbolRL`, `WordRL` and `RegEx` are the only instances of `ELabel`
 
+<!--
 ##### makeNFA
 ```haskell
 makeNFA :: (Ord a, Ord b, ELabel b) => [a] -> [SymbolRL] -> [((a,b),[a])] -> [a] -> [a] -> NFA a b
@@ -322,3 +323,4 @@ Checks if two NFA are equal relative to their acceptance of the first `n` word o
 recognizeLanguageVector :: (Ord a) => Int -> NFA a WordRL -> LanguageRL -> [Maybe Bool]
 ```
 Shows the acceptance of a NFA for the first `n` words of a Language, where `n` is the input number.
+-->
