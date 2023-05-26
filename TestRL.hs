@@ -9,6 +9,7 @@ import NFA
 import SetExtensionRL
 import RegLang
 import RegEx
+import ShowRL
 
 -----------------------
 -- Kleene-operations --

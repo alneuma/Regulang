@@ -1,7 +1,7 @@
 -- Copyright: (c) 2023, Alrik Neumann
 -- GNU General Public License v3.0+ (see LICENSE.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-module NFA (renameStates,replaceEmptyEdges,replaceWordEdges) where
+module NFA (renameStates,replaceEmptyEdges,replaceWordEdges,eqClassesDFA) where
 
 {-# LANGUAGE TupleSections #-}
 
@@ -51,7 +51,6 @@ instance (Integral a, ELabel b) => RegLang (NFA a b) where
       tmp0NFA = replaceEmptyEdges $ replaceWordEdges $ simplify nfa
       tmpNFA  = tmp0NFA {delta = S.map (\((q,l),rs) -> ((q,M.fromJust $ singletonToSymbol l),rs))
                                $ delta tmp0NFA}
-      dfaAsSet :: S.Set (S.Set a, S.Set (SymbolRL,S.Set a))
       dfaAsSet = go S.empty (S.singleton $ start tmpNFA)
       go processed unprocessed
         | S.null unprocessed = processed
@@ -206,16 +205,22 @@ refineAllEqClasses classes@(xs:xss)
   | null (snd $ head xs) = map (map fst) classes
   | otherwise            = refineAllEqClasses $ concatMap refineEqClass classes
 
+-- takes a list of states with added "word-acceptance-vectors" and groups them
+-- according to the first entry of this vector removes all the first entries
+-- of these vectors
 refineEqClass :: (Integral a) => [(a,[Bool])] -> [[(a,[Bool])]]
 refineEqClass []                 = []
 refineEqClass eqClass@((_,[]):_) = [eqClass]
 refineEqClass eqClass = go [] [] eqClass
   where
+    go true []    [] = [true]
+    go []   false [] = [false]
     go true false [] = [true,false]
     go true false ((q,b:bs):xs)
       | b         = go ((q,bs):true) false xs
       | otherwise = go true ((q,bs):false) xs
 
+-- adds to each state in the list of state lists a list denoting which words are accepted or not.
 addPatterns :: (Integral a) => NFA a SymbolRL -> [[a]] -> [WordRL] -> [[(a,[Bool])]]
 addPatterns dfa classes words = map (map (getPattern dfa words)) classes
   where
@@ -223,8 +228,11 @@ addPatterns dfa classes words = map (map (getPattern dfa words)) classes
       where
         pattern = map (M.fromJust . stateAccepts d s) w
 
+-- checks a an NFA accepts a word starting from a specified state
 stateAccepts :: (Integral a, ELabel b) => NFA a b -> a -> WordRL -> Maybe Bool
-stateAccepts nfa state = accepts modifiedNFA
+stateAccepts nfa state word
+  | S.member state (states nfa) = accepts modifiedNFA word
+  | otherwise                   = Nothing
   where
     modifiedNFA = nfa {start = S.singleton state}
 
